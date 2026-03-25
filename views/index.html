@@ -3,126 +3,626 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Amazon Importer Shopify</title>
+  <title>Amazon Importer → Shopify</title>
   <style>
+    :root{
+      --bg:#f5f7fb;
+      --panel:#ffffff;
+      --panel-soft:#f8fafc;
+      --border:#e5e7eb;
+      --text:#111827;
+      --muted:#6b7280;
+      --primary:#111827;
+      --primary-2:#1f2937;
+      --accent:#4f46e5;
+      --accent-soft:#eef2ff;
+      --success:#059669;
+      --success-soft:#ecfdf5;
+      --danger:#dc2626;
+      --danger-soft:#fef2f2;
+      --shadow:0 16px 40px rgba(15,23,42,0.08);
+      --radius:18px;
+    }
+
+    * { box-sizing: border-box; }
+
     body {
-      font-family: Arial, sans-serif;
-      margin: 24px;
-      background: #f7f7f7;
-      color: #111;
+      margin: 0;
+      font-family: Inter, Arial, Helvetica, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(79,70,229,0.07), transparent 28%),
+        radial-gradient(circle at top right, rgba(16,185,129,0.05), transparent 26%),
+        var(--bg);
+      color: var(--text);
     }
-    h1 {
-      margin-bottom: 10px;
+
+    .page {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 28px;
     }
-    .bar {
+
+    .hero {
+      background: linear-gradient(135deg, #111827 0%, #1f2937 60%, #312e81 100%);
+      color: #fff;
+      border-radius: 24px;
+      padding: 28px 30px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -80px;
+      top: -80px;
+      width: 240px;
+      height: 240px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 42px;
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 820px;
+      color: rgba(255,255,255,0.82);
+      line-height: 1.6;
+      font-size: 16px;
+    }
+
+    .toolbar {
       display: flex;
-      gap: 10px;
-      margin-bottom: 20px;
       flex-wrap: wrap;
-    }
-    button {
-      padding: 10px 16px;
-      border: 1px solid #ccc;
-      background: white;
-      cursor: pointer;
-      border-radius: 8px;
-    }
-    button:hover {
-      background: #efefef;
-    }
-    .status {
-      margin-bottom: 15px;
-      padding: 10px 12px;
-      background: white;
-      border-radius: 8px;
-      border: 1px solid #ddd;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 120px 1fr 120px 140px 160px;
       gap: 12px;
+      margin: 18px 0 22px;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid transparent;
+      border-radius: 14px;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.18s ease;
+      box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+    }
+
+    button.primary {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    button.primary:hover {
+      background: var(--primary-2);
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      background: #fff;
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    button.secondary:hover {
+      background: #f9fafb;
+      transform: translateY(-1px);
+    }
+
+    button.accent {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    button.accent:hover {
+      background: #4338ca;
+      transform: translateY(-1px);
+    }
+
+    button.ghost {
+      background: var(--accent-soft);
+      color: #3730a3;
+      border-color: #c7d2fe;
+    }
+
+    button.ghost:hover {
+      background: #e0e7ff;
+      transform: translateY(-1px);
+    }
+
+    button.import-btn {
+      min-width: 108px;
+      background: #fff;
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    button.import-btn:hover {
+      background: #f9fafb;
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    .status-card {
+      display: flex;
       align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 18px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
     }
-    .row, .head {
-      background: white;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 10px;
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
     }
-    .head {
-      font-weight: bold;
-      background: #f0f0f0;
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: #d1d5db;
+      box-shadow: 0 0 0 5px rgba(209,213,219,0.18);
+      flex: 0 0 auto;
     }
-    img {
-      width: 90px;
-      height: 90px;
+
+    .status-dot.ok {
+      background: var(--success);
+      box-shadow: 0 0 0 5px rgba(5,150,105,0.14);
+    }
+
+    .status-dot.bad {
+      background: var(--danger);
+      box-shadow: 0 0 0 5px rgba(220,38,38,0.12);
+    }
+
+    .status-title {
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 2px;
+    }
+
+    .status-sub {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .summary-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .summary-label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .summary-value {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      padding: 20px 22px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+    }
+
+    .panel-header h2 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    .panel-header p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    .table-head,
+    .table-row {
+      display: grid;
+      grid-template-columns: 112px minmax(360px, 1.5fr) 170px 120px 140px;
+      gap: 16px;
+      align-items: center;
+      padding: 16px 22px;
+    }
+
+    .table-head {
+      background: #f8fafc;
+      border-bottom: 1px solid var(--border);
+      color: #374151;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .table-row {
+      border-bottom: 1px solid #eef2f7;
+      background: #fff;
+      transition: background 0.16s ease;
+    }
+
+    .table-row:hover {
+      background: #fbfdff;
+    }
+
+    .table-row:last-child {
+      border-bottom: 0;
+    }
+
+    .thumb {
+      width: 78px;
+      height: 78px;
+      border-radius: 16px;
+      background: #fff;
+      border: 1px solid #edf0f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .thumb img {
+      max-width: 72px;
+      max-height: 72px;
       object-fit: contain;
-      background: white;
-      border: 1px solid #eee;
-      border-radius: 8px;
+      display: block;
     }
-    .small {
-      color: #666;
+
+    .thumb.empty {
+      color: #cbd5e1;
+      font-weight: 700;
+      font-size: 12px;
+      background: #f8fafc;
+    }
+
+    .title-cell {
+      min-width: 0;
+    }
+
+    .product-title {
+      font-weight: 800;
+      font-size: 20px;
+      line-height: 1.3;
+      margin-bottom: 8px;
+      color: #111827;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .pill.asin {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-color: #bfdbfe;
+    }
+
+    .pill.sku {
+      background: #f5f3ff;
+      color: #6d28d9;
+      border-color: #ddd6fe;
+    }
+
+    .pill.status {
+      background: #f0fdf4;
+      color: #15803d;
+      border-color: #bbf7d0;
+    }
+
+    .sku-value {
+      font-family: "Consolas", "SFMono-Regular", monospace;
+      font-size: 15px;
+      color: #111827;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: inline-block;
+    }
+
+    .price-value {
+      font-size: 22px;
+      font-weight: 800;
+      color: #111827;
+    }
+
+    .price-value small {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+
+    .footer-tools {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 18px 22px;
+      background: #fcfdff;
+      border-top: 1px solid var(--border);
+    }
+
+    .footer-note {
+      color: var(--muted);
       font-size: 13px;
     }
-    .title {
-      font-weight: bold;
-      margin-bottom: 6px;
-    }
-    .log {
+
+    .log-panel {
       margin-top: 20px;
+      background: #0b1220;
+      color: #c7f9cc;
+      border-radius: 20px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(148,163,184,0.12);
+    }
+
+    .log-title {
+      color: #fff;
+      font-weight: 800;
+      margin-bottom: 10px;
+      font-size: 15px;
+    }
+
+    .log {
       white-space: pre-wrap;
-      background: #111;
-      color: #0f0;
-      padding: 12px;
-      border-radius: 8px;
-      min-height: 140px;
-      font-family: Consolas, monospace;
+      min-height: 160px;
+      font-family: Consolas, "SFMono-Regular", monospace;
       font-size: 13px;
+      line-height: 1.6;
+      color: #86efac;
+    }
+
+    .empty-state {
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--muted);
+      background: linear-gradient(180deg, #fff 0%, #fbfcff 100%);
+    }
+
+    .empty-state strong {
+      display: block;
+      color: #111827;
+      margin-bottom: 8px;
+      font-size: 18px;
+    }
+
+    @media (max-width: 1200px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 900px) {
+      .page {
+        padding: 16px;
+      }
+
+      .hero h1 {
+        font-size: 32px;
+      }
+
+      .table-head,
+      .table-row {
+        min-width: 980px;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
-  <h1>Amazon Importer → Shopify</h1>
+  <div class="page">
+    <section class="hero">
+      <h1>Amazon Importer → Shopify</h1>
+      <p>
+        Importa rapidamente le tue inserzioni Amazon già presenti in Seller Central e crea prodotti in bozza su Shopify,
+        con titolo, immagini, descrizione, prezzo, SKU e ASIN.
+      </p>
+    </section>
 
-  <div class="bar">
-    <button onclick="connectShopify()">Collega Shopify</button>
-    <button onclick="checkStatus()">Controlla stato</button>
-    <button onclick="loadListings()">Carica inserzioni Amazon</button>
+    <div class="toolbar">
+      <button class="primary" onclick="connectShopify()">Collega Shopify</button>
+      <button class="secondary" onclick="checkStatus()">Controlla stato</button>
+      <button class="accent" onclick="loadListings(true)">Carica inserzioni Amazon</button>
+      <button class="ghost" id="loadMoreBtn" onclick="loadMoreListings()">Carica altre</button>
+    </div>
+
+    <div class="status-card">
+      <div class="status-left">
+        <div class="status-dot" id="statusDot"></div>
+        <div>
+          <div class="status-title" id="statusTitle">Stato non ancora verificato</div>
+          <div class="status-sub" id="statusSub">Premi “Controlla stato” per verificare la connessione Shopify.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-label">Inserzioni caricate</div>
+        <div class="summary-value" id="totalLoaded">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Pagina corrente</div>
+        <div class="summary-value" id="pageCounter">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Import completati</div>
+        <div class="summary-value" id="importedCounter">0</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Altre pagine Amazon</div>
+        <div class="summary-value" id="hasMoreCounter">No</div>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Catalogo Amazon</h2>
+          <p>Elenco ordinato delle inserzioni recuperate dal tuo account seller.</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-head">
+          <div>Immagine</div>
+          <div>Prodotto</div>
+          <div>SKU</div>
+          <div>Prezzo</div>
+          <div>Azione</div>
+        </div>
+
+        <div id="listings">
+          <div class="empty-state">
+            <strong>Nessuna inserzione caricata</strong>
+            Premi “Carica inserzioni Amazon” per iniziare.
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-tools">
+        <div class="footer-note" id="footerNote">Pronto per il primo caricamento.</div>
+        <div>
+          <button class="ghost" id="footerLoadMoreBtn" onclick="loadMoreListings()">Carica altre</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="log-panel">
+      <div class="log-title">Log operazioni</div>
+      <div class="log" id="logBox">Log pronto.</div>
+    </section>
   </div>
-
-  <div class="status" id="statusBox">Stato non ancora verificato.</div>
-
-  <div class="head grid">
-    <div>Immagine</div>
-    <div>Titolo</div>
-    <div>SKU</div>
-    <div>Prezzo</div>
-    <div>Azione</div>
-  </div>
-
-  <div id="listings"></div>
-
-  <div class="log" id="logBox">Log pronto.</div>
 
   <script>
+    let allListings = [];
+    let amazonNextToken = null;
+    let pagesLoaded = 0;
+    let importedCount = 0;
+
     function log(msg) {
       const box = document.getElementById('logBox');
-      box.textContent += `\n${msg}`;
+      const now = new Date().toLocaleTimeString('it-IT');
+      box.textContent += `\n[${now}] ${msg}`;
       box.scrollTop = box.scrollHeight;
+    }
+
+    function setStatus(connected, title, sub) {
+      const dot = document.getElementById('statusDot');
+      const titleEl = document.getElementById('statusTitle');
+      const subEl = document.getElementById('statusSub');
+
+      dot.classList.remove('ok', 'bad');
+      dot.classList.add(connected ? 'ok' : 'bad');
+      titleEl.textContent = title;
+      subEl.textContent = sub;
+    }
+
+    function updateSummary() {
+      document.getElementById('totalLoaded').textContent = String(allListings.length);
+      document.getElementById('pageCounter').textContent = String(pagesLoaded);
+      document.getElementById('importedCounter').textContent = String(importedCount);
+      document.getElementById('hasMoreCounter').textContent = amazonNextToken ? 'Sì' : 'No';
+
+      const disabled = !amazonNextToken;
+      document.getElementById('loadMoreBtn').disabled = disabled;
+      document.getElementById('footerLoadMoreBtn').disabled = disabled;
+
+      document.getElementById('footerNote').textContent = amazonNextToken
+        ? 'Sono disponibili altre pagine Amazon. Puoi continuare con “Carica altre”.'
+        : (allListings.length
+            ? 'Hai raggiunto l’ultima pagina disponibile per questo caricamento.'
+            : 'Pronto per il primo caricamento.');
     }
 
     async function checkStatus() {
       try {
         const r = await fetch('/api/status');
         const data = await r.json();
-        document.getElementById('statusBox').textContent =
-          data.shopifyConnected
-            ? 'Shopify collegato correttamente.'
-            : 'Shopify NON collegato. Premi "Collega Shopify".';
-        log('Status: ' + JSON.stringify(data, null, 2));
+
+        if (data.shopifyConnected) {
+          setStatus(true, 'Shopify collegato correttamente', 'L’app è autorizzata a creare prodotti in bozza.');
+        } else {
+          setStatus(false, 'Shopify non collegato', 'Premi “Collega Shopify” per autorizzare l’app.');
+        }
+
+        log('Status: ' + JSON.stringify(data));
       } catch (e) {
+        setStatus(false, 'Errore controllo stato', e.message);
         log('Errore status: ' + e.message);
       }
     }
@@ -131,43 +631,107 @@
       window.location.href = '/shopify/install';
     }
 
-    async function loadListings() {
+    async function loadListings(reset = false) {
       try {
+        if (reset) {
+          allListings = [];
+          amazonNextToken = null;
+          pagesLoaded = 0;
+          renderListings([]);
+          log('Reset elenco inserzioni Amazon...');
+        }
+
+        let url = '/api/amazon/listings?pageSize=100';
+        if (amazonNextToken) {
+          url += `&nextToken=${encodeURIComponent(amazonNextToken)}`;
+        }
+
         log('Caricamento inserzioni Amazon...');
-        const r = await fetch('/api/amazon/listings');
+        const r = await fetch(url);
         const data = await r.json();
 
         if (!data.ok) {
-          throw new Error(JSON.stringify(data.error));
+          throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
         }
 
-        renderListings(data.listings || []);
-        log(`Trovate ${data.listings.length} inserzioni Amazon.`);
+        const items = data.listings || [];
+        amazonNextToken = data.nextToken || null;
+        allListings = [...allListings, ...items];
+        pagesLoaded += 1;
+
+        renderListings(allListings);
+        updateSummary();
+
+        log(`Trovate ${items.length} inserzioni in questa pagina. Totale caricato: ${allListings.length}.`);
+        if (amazonNextToken) {
+          log('È disponibile una pagina successiva Amazon.');
+        } else {
+          log('Nessun’altra pagina Amazon disponibile.');
+        }
       } catch (e) {
         log('Errore listings: ' + e.message);
+        alert('Errore caricamento inserzioni: ' + e.message);
       }
+    }
+
+    async function loadMoreListings() {
+      if (!amazonNextToken) {
+        log('Nessun’altra pagina da caricare.');
+        return;
+      }
+      await loadListings(false);
     }
 
     function renderListings(items) {
       const root = document.getElementById('listings');
       root.innerHTML = '';
 
+      if (!items.length) {
+        root.innerHTML = `
+          <div class="empty-state">
+            <strong>Nessuna inserzione caricata</strong>
+            Premi “Carica inserzioni Amazon” per iniziare.
+          </div>
+        `;
+        return;
+      }
+
       for (const item of items) {
         const row = document.createElement('div');
-        row.className = 'row grid';
+        row.className = 'table-row';
+
+        const safeTitle = escapeHtml(item.title || '');
+        const safeAsin = escapeHtml(item.asin || '-');
+        const safeSku = escapeHtml(item.sku || '-');
+        const safePrice = escapeHtml(item.price || '-');
+        const statusText = Array.isArray(item.status) && item.status.length ? item.status.join(', ') : 'ATTIVO';
 
         row.innerHTML = `
           <div>
-            ${item.imageUrl ? `<img src="${item.imageUrl}" alt="">` : '—'}
+            ${item.imageUrl
+              ? `<div class="thumb"><img src="${item.imageUrl}" alt=""></div>`
+              : `<div class="thumb empty">NO IMG</div>`
+            }
           </div>
-          <div>
-            <div class="title">${escapeHtml(item.title || '')}</div>
-            <div class="small">ASIN: ${escapeHtml(item.asin || '-')}</div>
+
+          <div class="title-cell">
+            <div class="product-title">${safeTitle}</div>
+            <div class="meta-row">
+              <span class="pill asin">ASIN: ${safeAsin}</span>
+              <span class="pill status">${escapeHtml(statusText)}</span>
+            </div>
           </div>
-          <div>${escapeHtml(item.sku || '-')}</div>
-          <div>${escapeHtml(item.price || '-')}</div>
+
           <div>
-            <button onclick="importSku('${encodeURIComponent(item.sku)}')">Importa</button>
+            <div class="sku-value">${safeSku}</div>
+          </div>
+
+          <div>
+            <div class="price-value">${safePrice}<small>EUR</small></div>
+          </div>
+
+          <div>
+            <button class="import-btn" onclick="importSku('${encodeURIComponent(item.sku)}', this)">Importa</button>
           </div>
         `;
 
@@ -175,9 +739,17 @@
       }
     }
 
-    async function importSku(encodedSku) {
+    async function importSku(encodedSku, buttonEl) {
+      const originalLabel = buttonEl ? buttonEl.textContent : 'Importa';
+
       try {
         const sku = decodeURIComponent(encodedSku);
+
+        if (buttonEl) {
+          buttonEl.disabled = true;
+          buttonEl.textContent = 'Importo...';
+        }
+
         log(`Importazione SKU ${sku}...`);
 
         const r = await fetch(`/api/shopify/import/${encodeURIComponent(sku)}`, {
@@ -187,14 +759,22 @@
         const data = await r.json();
 
         if (!data.ok) {
-          throw new Error(JSON.stringify(data.error));
+          throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
         }
 
-        log(`Import completato per SKU ${sku}: ` + JSON.stringify(data.product, null, 2));
-        alert(`Prodotto importato su Shopify: ${sku}`);
+        importedCount += 1;
+        updateSummary();
+
+        log(`Import completato per SKU ${sku}: ${JSON.stringify(data.product)}`);
+        alert(`Prodotto importato correttamente su Shopify.\nSKU: ${sku}`);
       } catch (e) {
         log('Errore import: ' + e.message);
-        alert('Errore import: ' + e.message);
+        alert('Errore import:\n' + e.message);
+      } finally {
+        if (buttonEl) {
+          buttonEl.disabled = false;
+          buttonEl.textContent = originalLabel;
+        }
       }
     }
 
@@ -208,6 +788,7 @@
     }
 
     checkStatus();
+    updateSummary();
   </script>
 </body>
 </html>
