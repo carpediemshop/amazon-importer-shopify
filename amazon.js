@@ -89,23 +89,33 @@ function pickListingSummary(item) {
   };
 }
 
-async function getAmazonListings({ pageSize = 20 } = {}) {
+async function getAmazonListings({ pageSize = 100, nextToken = null } = {}) {
   const sellerId = requireEnv('AMAZON_SELLER_ID');
   const marketplaceId = requireEnv('AMAZON_MARKETPLACE_ID');
 
   const token = await getLwaAccessToken();
   const client = getSpApiClient(token);
 
+  const params = {
+    marketplaceIds: marketplaceId,
+    pageSize,
+    includedData: 'summaries,attributes,offers'
+  };
+
+  if (nextToken) {
+    params.nextToken = nextToken;
+  }
+
   const response = await client.get(`/listings/2021-08-01/items/${sellerId}`, {
-    params: {
-      marketplaceIds: marketplaceId,
-      pageSize,
-      includedData: 'summaries,attributes,offers'
-    }
+    params
   });
 
   const items = response.data.items || [];
-  return items.map(pickListingSummary);
+
+  return {
+    items: items.map(pickListingSummary),
+    nextToken: response.data.pagination?.nextToken || null
+  };
 }
 
 async function getAmazonListingDetail(sku) {
@@ -162,10 +172,15 @@ async function getAmazonListingDetail(sku) {
     }
   }
 
-  const descriptionHtml = descriptionParts.join('<br><br>') || `<p>Prodotto importato da Amazon SKU ${escapeHtml(sku)}</p>`;
+  const descriptionHtml =
+    descriptionParts.join('<br><br>') ||
+    `<p>Prodotto importato da Amazon SKU ${escapeHtml(sku)}</p>`;
 
   const imageCandidates = [];
-  if (summary.mainImage?.link) imageCandidates.push(summary.mainImage.link);
+
+  if (summary.mainImage?.link) {
+    imageCandidates.push(summary.mainImage.link);
+  }
 
   if (Array.isArray(summary.otherProductImageUrls)) {
     imageCandidates.push(...summary.otherProductImageUrls);
@@ -190,7 +205,6 @@ async function getAmazonListingDetail(sku) {
   const barcode =
     attributes.externally_assigned_product_identifier?.[0]?.value ||
     attributes.item_package_gtin?.[0]?.value ||
-    attributes.product_site_launch_date?.[0]?.value ||
     null;
 
   return {
