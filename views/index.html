@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Amazon Importer → Shopify</title>
+  <link rel="icon" type="image/jpeg" href="/favicon.jpg" />
   <style>
     :root{
       --bg:#f5f7fb;
@@ -17,11 +18,8 @@
       --accent:#4f46e5;
       --accent-soft:#eef2ff;
       --success:#059669;
-      --success-soft:#ecfdf5;
       --danger:#dc2626;
-      --danger-soft:#fef2f2;
       --shadow:0 16px 40px rgba(15,23,42,0.08);
-      --radius:18px;
     }
 
     * { box-sizing: border-box; }
@@ -641,7 +639,7 @@
           log('Reset elenco inserzioni Amazon...');
         }
 
-        let url = '/api/amazon/listings?pageSize=100';
+        let url = '/api/amazon/listings?pageSize=20';
         if (amazonNextToken) {
           url += `&nextToken=${encodeURIComponent(amazonNextToken)}`;
         }
@@ -670,7 +668,7 @@
         }
       } catch (e) {
         log('Errore listings: ' + e.message);
-        alert('Errore caricamento inserzioni: ' + e.message);
+        alert('Errore caricamento inserzioni:\n' + e.message);
       }
     }
 
