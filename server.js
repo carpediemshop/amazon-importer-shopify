@@ -18,7 +18,7 @@ const {
 const app = express();
 app.set('trust proxy', 1);
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use(
@@ -29,7 +29,8 @@ app.use(
     cookie: {
       secure: true,
       httpOnly: true,
-      sameSite: 'lax'
+      sameSite: 'lax',
+      maxAge: 1000 * 60 * 60 * 12
     }
   })
 );
@@ -52,6 +53,7 @@ function getShopifyStoreDomain() {
   return requireEnv('SHOPIFY_STORE_DOMAIN');
 }
 
+// V1/V2 semplice: token in memoria
 let shopifyAccessToken = null;
 
 app.get('/', (req, res) => {
@@ -113,7 +115,6 @@ app.get('/shopify/callback', async (req, res) => {
     });
 
     shopifyAccessToken = tokenResponse.access_token;
-
     req.session.shopifyInstalled = true;
 
     const adminUrl = host
@@ -126,15 +127,53 @@ app.get('/shopify/callback', async (req, res) => {
           <meta charset="utf-8" />
           <title>Shopify collegato</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 30px; line-height: 1.5; }
-            a, button { font-size: 16px; }
+            body {
+              font-family: Inter, Arial, sans-serif;
+              background: #f5f7fb;
+              padding: 40px;
+              color: #111827;
+            }
+            .card {
+              max-width: 720px;
+              margin: 0 auto;
+              background: #ffffff;
+              border-radius: 18px;
+              padding: 32px;
+              box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+              border: 1px solid #e5e7eb;
+            }
+            h2 {
+              margin-top: 0;
+              margin-bottom: 10px;
+            }
+            p {
+              color: #4b5563;
+              line-height: 1.6;
+            }
+            a.button {
+              display: inline-block;
+              margin-right: 12px;
+              margin-top: 10px;
+              padding: 12px 18px;
+              border-radius: 12px;
+              text-decoration: none;
+              font-weight: 600;
+              background: #111827;
+              color: #fff;
+            }
+            a.secondary {
+              background: #eef2ff;
+              color: #3730a3;
+            }
           </style>
         </head>
         <body>
-          <h2>Collegamento Shopify completato</h2>
-          <p>Token ottenuto correttamente.</p>
-          <p><a href="/">Vai all'importer</a></p>
-          ${adminUrl ? `<p><a href="${adminUrl}" target="_blank" rel="noreferrer">Apri Shopify Admin</a></p>` : ''}
+          <div class="card">
+            <h2>Collegamento Shopify completato</h2>
+            <p>Token ottenuto correttamente. L'app importer è pronta a creare i prodotti in bozza su Shopify.</p>
+            <a class="button" href="/">Vai all'importer</a>
+            ${adminUrl ? `<a class="button secondary" href="${adminUrl}" target="_blank" rel="noreferrer">Apri Shopify Admin</a>` : ''}
+          </div>
         </body>
       </html>
     `);
@@ -155,9 +194,16 @@ app.get('/api/status', (req, res) => {
 
 app.get('/api/amazon/listings', async (req, res) => {
   try {
-    const pageSize = Number(req.query.pageSize || 20);
-    const listings = await getAmazonListings({ pageSize });
-    res.json({ ok: true, listings });
+    const pageSize = Number(req.query.pageSize || 100);
+    const nextToken = req.query.nextToken || null;
+
+    const result = await getAmazonListings({ pageSize, nextToken });
+
+    res.json({
+      ok: true,
+      listings: result.items,
+      nextToken: result.nextToken
+    });
   } catch (error) {
     console.error('Amazon listings error:', error.response?.data || error.message);
     res.status(500).json({
@@ -186,7 +232,7 @@ app.post('/api/shopify/import/:sku', async (req, res) => {
     if (!shopifyAccessToken) {
       return res.status(401).json({
         ok: false,
-        error: 'Shopify non collegato. Vai su /shopify/install prima.'
+        error: 'Shopify non collegato. Premi "Collega Shopify" prima.'
       });
     }
 
