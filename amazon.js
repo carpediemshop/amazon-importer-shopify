@@ -89,7 +89,7 @@ function pickListingSummary(item) {
   };
 }
 
-async function getAmazonListings({ pageSize = 100, nextToken = null } = {}) {
+async function getAmazonListings({ pageSize = 20, nextToken = null } = {}) {
   const sellerId = requireEnv('AMAZON_SELLER_ID');
   const marketplaceId = requireEnv('AMAZON_MARKETPLACE_ID');
 
