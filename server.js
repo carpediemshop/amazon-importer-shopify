@@ -53,7 +53,6 @@ function getShopifyStoreDomain() {
   return requireEnv('SHOPIFY_STORE_DOMAIN');
 }
 
-// V1/V2 semplice: token in memoria
 let shopifyAccessToken = null;
 
 app.get('/', (req, res) => {
@@ -126,6 +125,7 @@ app.get('/shopify/callback', async (req, res) => {
         <head>
           <meta charset="utf-8" />
           <title>Shopify collegato</title>
+          <link rel="icon" type="image/jpeg" href="/favicon.jpg" />
           <style>
             body {
               font-family: Inter, Arial, sans-serif;
@@ -170,7 +170,7 @@ app.get('/shopify/callback', async (req, res) => {
         <body>
           <div class="card">
             <h2>Collegamento Shopify completato</h2>
-            <p>Token ottenuto correttamente. L'app importer è pronta a creare i prodotti in bozza su Shopify.</p>
+            <p>Token ottenuto correttamente. L’app importer è pronta a creare prodotti in bozza su Shopify.</p>
             <a class="button" href="/">Vai all'importer</a>
             ${adminUrl ? `<a class="button secondary" href="${adminUrl}" target="_blank" rel="noreferrer">Apri Shopify Admin</a>` : ''}
           </div>
@@ -194,7 +194,7 @@ app.get('/api/status', (req, res) => {
 
 app.get('/api/amazon/listings', async (req, res) => {
   try {
-    const pageSize = Number(req.query.pageSize || 100);
+    const pageSize = Number(req.query.pageSize || 20);
     const nextToken = req.query.nextToken || null;
 
     const result = await getAmazonListings({ pageSize, nextToken });
