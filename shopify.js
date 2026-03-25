@@ -99,13 +99,21 @@ async function createShopifyProduct({ accessToken, detail }) {
   ].filter(Boolean);
 
   const productCreateMutation = `
-    mutation productCreate($input: ProductCreateInput!, $media: [CreateMediaInput!]) {
-      productCreate(input: $input, media: $media) {
+    mutation productCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+      productCreate(product: $product, media: $media) {
         product {
           id
           title
           handle
           status
+          variants(first: 1) {
+            nodes {
+              id
+              sku
+              barcode
+              price
+            }
+          }
         }
         userErrors {
           field
@@ -121,7 +129,7 @@ async function createShopifyProduct({ accessToken, detail }) {
   }));
 
   const variables = {
-    input: {
+    product: {
       title: detail.title,
       descriptionHtml: detail.descriptionHtml,
       vendor: detail.brand || 'Amazon Import',
@@ -133,14 +141,18 @@ async function createShopifyProduct({ accessToken, detail }) {
   };
 
   const created = await shopifyGraphQL(accessToken, productCreateMutation, variables);
-
   const result = created.productCreate;
 
   if (result.userErrors && result.userErrors.length) {
     throw new Error(JSON.stringify(result.userErrors));
   }
 
-  const productId = result.product.id;
+  const product = result.product;
+  const firstVariant = product?.variants?.nodes?.[0];
+
+  if (!firstVariant?.id) {
+    throw new Error('Variant iniziale Shopify non trovata dopo productCreate.');
+  }
 
   const variantMutation = `
     mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -160,15 +172,16 @@ async function createShopifyProduct({ accessToken, detail }) {
   `;
 
   const variantUpdate = await shopifyGraphQL(accessToken, variantMutation, {
-    productId,
+    productId: product.id,
     variants: [
       {
+        id: firstVariant.id,
         price: detail.price || '0.00',
+        barcode: detail.barcode || null,
         inventoryItem: {
           sku: detail.sku || '',
           tracked: false
-        },
-        barcode: detail.barcode || null
+        }
       }
     ]
   });
@@ -181,7 +194,7 @@ async function createShopifyProduct({ accessToken, detail }) {
   }
 
   return {
-    product: result.product,
+    product,
     variants: variantUpdate.productVariantsBulkUpdate.productVariants
   };
 }
