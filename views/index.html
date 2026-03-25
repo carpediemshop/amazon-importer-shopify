@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Amazon Importer Shopify</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 24px;
+      background: #f7f7f7;
+      color: #111;
+    }
+    h1 {
+      margin-bottom: 10px;
+    }
+    .bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    button {
+      padding: 10px 16px;
+      border: 1px solid #ccc;
+      background: white;
+      cursor: pointer;
+      border-radius: 8px;
+    }
+    button:hover {
+      background: #efefef;
+    }
+    .status {
+      margin-bottom: 15px;
+      padding: 10px 12px;
+      background: white;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 120px 1fr 120px 140px 160px;
+      gap: 12px;
+      align-items: center;
+    }
+    .row, .head {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .head {
+      font-weight: bold;
+      background: #f0f0f0;
+    }
+    img {
+      width: 90px;
+      height: 90px;
+      object-fit: contain;
+      background: white;
+      border: 1px solid #eee;
+      border-radius: 8px;
+    }
+    .small {
+      color: #666;
+      font-size: 13px;
+    }
+    .title {
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    .log {
+      margin-top: 20px;
+      white-space: pre-wrap;
+      background: #111;
+      color: #0f0;
+      padding: 12px;
+      border-radius: 8px;
+      min-height: 140px;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Amazon Importer → Shopify</h1>
+
+  <div class="bar">
+    <button onclick="connectShopify()">Collega Shopify</button>
+    <button onclick="checkStatus()">Controlla stato</button>
+    <button onclick="loadListings()">Carica inserzioni Amazon</button>
+  </div>
+
+  <div class="status" id="statusBox">Stato non ancora verificato.</div>
+
+  <div class="head grid">
+    <div>Immagine</div>
+    <div>Titolo</div>
+    <div>SKU</div>
+    <div>Prezzo</div>
+    <div>Azione</div>
+  </div>
+
+  <div id="listings"></div>
+
+  <div class="log" id="logBox">Log pronto.</div>
+
+  <script>
+    function log(msg) {
+      const box = document.getElementById('logBox');
+      box.textContent += `\n${msg}`;
+      box.scrollTop = box.scrollHeight;
+    }
+
+    async function checkStatus() {
+      try {
+        const r = await fetch('/api/status');
+        const data = await r.json();
+        document.getElementById('statusBox').textContent =
+          data.shopifyConnected
+            ? 'Shopify collegato correttamente.'
+            : 'Shopify NON collegato. Premi "Collega Shopify".';
+        log('Status: ' + JSON.stringify(data, null, 2));
+      } catch (e) {
+        log('Errore status: ' + e.message);
+      }
+    }
+
+    function connectShopify() {
+      window.location.href = '/shopify/install';
+    }
+
+    async function loadListings() {
+      try {
+        log('Caricamento inserzioni Amazon...');
+        const r = await fetch('/api/amazon/listings');
+        const data = await r.json();
+
+        if (!data.ok) {
+          throw new Error(JSON.stringify(data.error));
+        }
+
+        renderListings(data.listings || []);
+        log(`Trovate ${data.listings.length} inserzioni Amazon.`);
+      } catch (e) {
+        log('Errore listings: ' + e.message);
+      }
+    }
+
+    function renderListings(items) {
+      const root = document.getElementById('listings');
+      root.innerHTML = '';
+
+      for (const item of items) {
+        const row = document.createElement('div');
+        row.className = 'row grid';
+
+        row.innerHTML = `
+          <div>
+            ${item.imageUrl ? `<img src="${item.imageUrl}" alt="">` : '—'}
+          </div>
+          <div>
+            <div class="title">${escapeHtml(item.title || '')}</div>
+            <div class="small">ASIN: ${escapeHtml(item.asin || '-')}</div>
+          </div>
+          <div>${escapeHtml(item.sku || '-')}</div>
+          <div>${escapeHtml(item.price || '-')}</div>
+          <div>
+            <button onclick="importSku('${encodeURIComponent(item.sku)}')">Importa</button>
+          </div>
+        `;
+
+        root.appendChild(row);
+      }
+    }
+
+    async function importSku(encodedSku) {
+      try {
+        const sku = decodeURIComponent(encodedSku);
+        log(`Importazione SKU ${sku}...`);
+
+        const r = await fetch(`/api/shopify/import/${encodeURIComponent(sku)}`, {
+          method: 'POST'
+        });
+
+        const data = await r.json();
+
+        if (!data.ok) {
+          throw new Error(JSON.stringify(data.error));
+        }
+
+        log(`Import completato per SKU ${sku}: ` + JSON.stringify(data.product, null, 2));
+        alert(`Prodotto importato su Shopify: ${sku}`);
+      } catch (e) {
+        log('Errore import: ' + e.message);
+        alert('Errore import: ' + e.message);
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    checkStatus();
+  </script>
+</body>
+</html>
