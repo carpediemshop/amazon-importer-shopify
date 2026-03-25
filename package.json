@@ -1,7 +1,7 @@
 {
   "name": "amazon-importer-shopify",
-  "version": "1.0.0",
-  "description": "Importer Amazon Seller Central -> Shopify",
+  "version": "2.0.0",
+  "description": "Amazon Seller Central -> Shopify Importer",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
