@@ -12,7 +12,7 @@ const {
   buildShopifyInstallUrl,
   verifyShopifyCallbackHmac,
   exchangeCodeForToken,
-  createShopifyProduct
+  createOrRejectShopifyProduct
 } = require('./shopify');
 
 const app = express();
@@ -239,14 +239,14 @@ app.post('/api/shopify/import/:sku', async (req, res) => {
     const sku = req.params.sku;
     const detail = await getAmazonListingDetail(sku);
 
-    const product = await createShopifyProduct({
+    const result = await createOrRejectShopifyProduct({
       accessToken: shopifyAccessToken,
       detail
     });
 
     res.json({
       ok: true,
-      product
+      result
     });
   } catch (error) {
     console.error('Shopify import error:', error.response?.data || error.message);
