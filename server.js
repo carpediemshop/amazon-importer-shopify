@@ -2,6 +2,7 @@ const express = require('express');
 const session = require('express-session');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 
 const {
   getAmazonListings,
@@ -85,6 +86,74 @@ function listingMatchesSearch(item, term) {
   return haystack.includes(needle);
 }
 
+/**
+ * =========================================================
+ * PERSISTENZA TOKEN SHOPIFY SU FILE
+ * =========================================================
+ */
+
+const DATA_DIR = path.join(__dirname, 'data');
+const SHOPIFY_TOKEN_FILE = path.join(DATA_DIR, 'shopify-token.json');
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+function saveShopifyTokenToFile({ accessToken, shop }) {
+  try {
+    ensureDataDir();
+
+    const payload = {
+      accessToken,
+      shop,
+      savedAt: new Date().toISOString()
+    };
+
+    fs.writeFileSync(SHOPIFY_TOKEN_FILE, JSON.stringify(payload, null, 2), 'utf8');
+    console.log('Token Shopify salvato su file.');
+  } catch (error) {
+    console.error('Errore salvataggio token Shopify su file:', error.message);
+  }
+}
+
+function loadShopifyTokenFromFile() {
+  try {
+    if (!fs.existsSync(SHOPIFY_TOKEN_FILE)) {
+      return null;
+    }
+
+    const raw = fs.readFileSync(SHOPIFY_TOKEN_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+
+    if (!parsed || !parsed.accessToken) {
+      return null;
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error('Errore lettura token Shopify da file:', error.message);
+    return null;
+  }
+}
+
+function clearShopifyTokenFile() {
+  try {
+    if (fs.existsSync(SHOPIFY_TOKEN_FILE)) {
+      fs.unlinkSync(SHOPIFY_TOKEN_FILE);
+    }
+  } catch (error) {
+    console.error('Errore cancellazione token Shopify da file:', error.message);
+  }
+}
+
+/**
+ * =========================================================
+ * HELPER LISTINGS AMAZON
+ * =========================================================
+ */
+
 async function getImportableAmazonListingsPage({ accessToken, pageSize, pageToken }) {
   let finalItems = [];
   let finalNextToken = null;
@@ -126,6 +195,17 @@ async function getImportableAmazonListingsPage({ accessToken, pageSize, pageToke
 }
 
 let shopifyAccessToken = null;
+let shopifyConnectedShop = process.env.SHOPIFY_STORE_DOMAIN || null;
+
+/**
+ * Ricarico il token Shopify salvato su file all'avvio
+ */
+const persistedShopify = loadShopifyTokenFromFile();
+if (persistedShopify?.accessToken) {
+  shopifyAccessToken = persistedShopify.accessToken;
+  shopifyConnectedShop = persistedShopify.shop || shopifyConnectedShop;
+  console.log(`Token Shopify ricaricato automaticamente da file per shop ${shopifyConnectedShop}`);
+}
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'index.html'));
@@ -136,7 +216,8 @@ app.get('/health', (req, res) => {
     ok: true,
     app: 'amazon-importer-shopify',
     hasShopifyToken: !!shopifyAccessToken,
-    shop: process.env.SHOPIFY_STORE_DOMAIN || null
+    shop: shopifyConnectedShop || null,
+    tokenPersistedOnDisk: fs.existsSync(SHOPIFY_TOKEN_FILE)
   });
 });
 
@@ -186,7 +267,13 @@ app.get('/shopify/callback', async (req, res) => {
     });
 
     shopifyAccessToken = tokenResponse.access_token;
+    shopifyConnectedShop = shop;
     req.session.shopifyInstalled = true;
+
+    saveShopifyTokenToFile({
+      accessToken: shopifyAccessToken,
+      shop
+    });
 
     const adminUrl = host
       ? `https://admin.shopify.com/store/${shop.replace('.myshopify.com', '')}/apps`
@@ -242,7 +329,7 @@ app.get('/shopify/callback', async (req, res) => {
         <body>
           <div class="card">
             <h2>Collegamento Shopify completato</h2>
-            <p>Token ottenuto correttamente. L’app importer è pronta a creare prodotti in bozza su Shopify.</p>
+            <p>Token ottenuto correttamente e salvato su file. L’app proverà a riutilizzarlo automaticamente ai riavvii.</p>
             <a class="button" href="/">Vai all'importer</a>
             ${adminUrl ? `<a class="button secondary" href="${adminUrl}" target="_blank" rel="noreferrer">Apri Shopify Admin</a>` : ''}
           </div>
@@ -260,7 +347,9 @@ app.get('/shopify/callback', async (req, res) => {
 app.get('/api/status', (req, res) => {
   res.json({
     ok: true,
-    shopifyConnected: !!shopifyAccessToken
+    shopifyConnected: !!shopifyAccessToken,
+    shop: shopifyConnectedShop || null,
+    tokenPersistedOnDisk: fs.existsSync(SHOPIFY_TOKEN_FILE)
   });
 });
 
@@ -273,7 +362,7 @@ app.get('/api/amazon/listings', async (req, res) => {
       });
     }
 
-    const pageSize = Number(req.query.pageSize || 20);
+    const pageSize = Math.min(Math.max(Number(req.query.pageSize || 20), 1), 20);
     const pageToken = req.query.pageToken || null;
 
     const result = await getImportableAmazonListingsPage({
@@ -325,7 +414,7 @@ app.get('/api/amazon/search', async (req, res) => {
     const seenSkus = new Set();
 
     while (scannedPages < 50 && matches.length < limit) {
-      const result = await getAmazonListings({ pageSize: 50, pageToken });
+      const result = await getAmazonListings({ pageSize: 20, pageToken });
       const amazonItems = result.items || [];
       pageToken = result.nextToken || null;
 
@@ -486,6 +575,17 @@ app.post('/api/shopify/import-bulk', async (req, res) => {
       error: error.response?.data || error.message
     });
   }
+});
+
+app.post('/api/shopify/disconnect', (req, res) => {
+  shopifyAccessToken = null;
+  shopifyConnectedShop = null;
+  clearShopifyTokenFile();
+
+  res.json({
+    ok: true,
+    message: 'Collegamento Shopify rimosso.'
+  });
 });
 
 app.listen(process.env.PORT || 10000, () => {
