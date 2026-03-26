@@ -10,7 +10,7 @@ function requireEnv(name) {
 }
 
 function getScopes() {
-  return 'read_products,write_products';
+  return 'read_products,write_products,read_inventory,write_inventory,read_locations';
 }
 
 function buildShopifyInstallUrl({ shop, state, redirectUri }) {
@@ -91,11 +91,95 @@ async function shopifyGraphQL(accessToken, query, variables = {}) {
   return response.data.data;
 }
 
-async function createShopifyProduct({ accessToken, detail }) {
+async function createOrRejectShopifyProduct({ accessToken, detail }) {
+  const duplicate = await findDuplicateVariant(accessToken, detail);
+
+  if (duplicate) {
+    return {
+      created: false,
+      duplicate: true,
+      reason: 'SKU già presente su Shopify',
+      existing: duplicate
+    };
+  }
+
+  const location = await getFirstLocation(accessToken);
+  const created = await createShopifyProduct(accessToken, detail);
+
+  const product = created.product;
+  const firstVariant = created.firstVariant;
+
+  await updateVariantData(accessToken, product.id, firstVariant.id, detail);
+
+  const refreshedVariant = await getVariantById(accessToken, firstVariant.id);
+
+  if (detail.quantity > 0 && refreshedVariant?.inventoryItem?.id && location?.id) {
+    await ensureInventory(accessToken, refreshedVariant.inventoryItem.id, location.id, detail.quantity);
+  }
+
+  return {
+    created: true,
+    duplicate: false,
+    product,
+    variant: refreshedVariant || firstVariant
+  };
+}
+
+async function findDuplicateVariant(accessToken, detail) {
+  const queries = [];
+
+  if (detail.sku) queries.push(`sku:${escapeSearch(detail.sku)}`);
+  if (detail.barcode) queries.push(`barcode:${escapeSearch(detail.barcode)}`);
+
+  for (const query of queries) {
+    const gql = `
+      query DuplicateVariantSearch($query: String!) {
+        productVariants(first: 5, query: $query) {
+          nodes {
+            id
+            sku
+            barcode
+            product {
+              id
+              title
+              handle
+              status
+            }
+          }
+        }
+      }
+    `;
+
+    const data = await shopifyGraphQL(accessToken, gql, { query });
+    const node = data.productVariants?.nodes?.[0];
+    if (node) return node;
+  }
+
+  return null;
+}
+
+async function getFirstLocation(accessToken) {
+  const gql = `
+    query FirstLocation {
+      locations(first: 1) {
+        nodes {
+          id
+          name
+        }
+      }
+    }
+  `;
+
+  const data = await shopifyGraphQL(accessToken, gql);
+  return data.locations?.nodes?.[0] || null;
+}
+
+async function createShopifyProduct(accessToken, detail) {
   const tags = [
     'amazon-imported',
     detail.asin ? `amazon-asin:${detail.asin}` : null,
-    detail.sku ? `amazon-sku:${detail.sku}` : null
+    detail.sku ? `amazon-sku:${detail.sku}` : null,
+    detail.brand ? normalizeTag(detail.brand) : null
   ].filter(Boolean);
 
   const productCreateMutation = `
@@ -106,12 +190,18 @@ async function createShopifyProduct({ accessToken, detail }) {
           title
           handle
           status
+          vendor
           variants(first: 1) {
             nodes {
               id
               sku
               barcode
               price
+              inventoryItem {
+                id
+                sku
+                tracked
+              }
             }
           }
         }
@@ -154,6 +244,10 @@ async function createShopifyProduct({ accessToken, detail }) {
     throw new Error('Variant iniziale Shopify non trovata dopo productCreate.');
   }
 
+  return { product, firstVariant };
+}
+
+async function updateVariantData(accessToken, productId, variantId, detail) {
   const variantMutation = `
     mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
       productVariantsBulkUpdate(productId: $productId, variants: $variants) {
@@ -162,6 +256,17 @@ async function createShopifyProduct({ accessToken, detail }) {
           sku
           barcode
           price
+          inventoryItem {
+            id
+            sku
+            tracked
+            measurement {
+              weight {
+                value
+                unit
+              }
+            }
+          }
         }
         userErrors {
           field
@@ -171,37 +276,165 @@ async function createShopifyProduct({ accessToken, detail }) {
     }
   `;
 
-  const variantUpdate = await shopifyGraphQL(accessToken, variantMutation, {
-    productId: product.id,
-    variants: [
-      {
-        id: firstVariant.id,
-        price: detail.price || '0.00',
-        barcode: detail.barcode || null,
-        inventoryItem: {
-          sku: detail.sku || '',
-          tracked: false
-        }
-      }
-    ]
-  });
+  const inventoryItem = {
+    sku: detail.sku || '',
+    tracked: true,
+    requiresShipping: true
+  };
 
-  if (
-    variantUpdate.productVariantsBulkUpdate.userErrors &&
-    variantUpdate.productVariantsBulkUpdate.userErrors.length
-  ) {
-    throw new Error(JSON.stringify(variantUpdate.productVariantsBulkUpdate.userErrors));
+  if (detail.weight?.value) {
+    inventoryItem.measurement = {
+      weight: {
+        value: detail.weight.value,
+        unit: detail.weight.unit || 'KILOGRAMS'
+      }
+    };
   }
 
-  return {
-    product,
-    variants: variantUpdate.productVariantsBulkUpdate.productVariants
+  const variables = {
+    productId,
+    variants: [
+      {
+        id: variantId,
+        price: detail.price || '0.00',
+        barcode: detail.barcode || null,
+        inventoryItem
+      }
+    ]
   };
+
+  const updated = await shopifyGraphQL(accessToken, variantMutation, variables);
+
+  if (
+    updated.productVariantsBulkUpdate.userErrors &&
+    updated.productVariantsBulkUpdate.userErrors.length
+  ) {
+    throw new Error(JSON.stringify(updated.productVariantsBulkUpdate.userErrors));
+  }
+
+  return updated.productVariantsBulkUpdate.productVariants?.[0] || null;
+}
+
+async function ensureInventory(accessToken, inventoryItemId, locationId, quantity) {
+  const activateMutation = `
+    mutation InventoryActivate($inventoryItemId: ID!, $locationId: ID!, $available: Int!) {
+      inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, available: $available) {
+        inventoryLevel {
+          id
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const activated = await shopifyGraphQL(accessToken, activateMutation, {
+    inventoryItemId,
+    locationId,
+    available: Number(quantity || 0)
+  });
+
+  const activateErrors = activated.inventoryActivate?.userErrors || [];
+  if (activateErrors.length) {
+    const msg = JSON.stringify(activateErrors);
+    const ignorable = msg.toLowerCase().includes('already') || msg.toLowerCase().includes('stocked');
+    if (!ignorable) {
+      throw new Error(msg);
+    }
+  }
+
+  const setMutation = `
+    mutation InventorySet($input: InventorySetQuantitiesInput!) {
+      inventorySetQuantities(input: $input) {
+        inventoryAdjustmentGroup {
+          createdAt
+          reason
+          changes {
+            name
+            delta
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const setResult = await shopifyGraphQL(accessToken, setMutation, {
+    input: {
+      name: 'available',
+      reason: 'correction',
+      ignoreCompareQuantity: true,
+      referenceDocumentUri: `gid://amazon-importer/import/${inventoryItemId}`,
+      quantities: [
+        {
+          inventoryItemId,
+          locationId,
+          quantity: Number(quantity || 0)
+        }
+      ]
+    }
+  });
+
+  const setErrors = setResult.inventorySetQuantities?.userErrors || [];
+  if (setErrors.length) {
+    throw new Error(JSON.stringify(setErrors));
+  }
+}
+
+async function getVariantById(accessToken, variantId) {
+  const gql = `
+    query VariantById($id: ID!) {
+      productVariant(id: $id) {
+        id
+        sku
+        barcode
+        price
+        inventoryQuantity
+        inventoryItem {
+          id
+          sku
+          tracked
+          measurement {
+            weight {
+              value
+              unit
+            }
+          }
+        }
+        product {
+          id
+          title
+          vendor
+          handle
+          status
+        }
+      }
+    }
+  `;
+
+  const data = await shopifyGraphQL(accessToken, gql, { id: variantId });
+  return data.productVariant || null;
+}
+
+function normalizeTag(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-');
+}
+
+function escapeSearch(value) {
+  return String(value || '').replace(/([:\\()"])/g, '\\$1');
 }
 
 module.exports = {
   buildShopifyInstallUrl,
   verifyShopifyCallbackHmac,
   exchangeCodeForToken,
-  createShopifyProduct
+  createOrRejectShopifyProduct
 };
