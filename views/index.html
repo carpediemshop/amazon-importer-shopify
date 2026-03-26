@@ -9,7 +9,6 @@
     :root{
       --bg:#f5f7fb;
       --panel:#ffffff;
-      --panel-soft:#f8fafc;
       --border:#e5e7eb;
       --text:#111827;
       --muted:#6b7280;
@@ -19,8 +18,6 @@
       --accent-soft:#eef2ff;
       --success:#059669;
       --danger:#dc2626;
-      --warning:#b45309;
-      --warning-soft:#fffbeb;
       --shadow:0 16px 40px rgba(15,23,42,0.08);
     }
 
@@ -73,7 +70,7 @@
 
     .hero p {
       margin: 0;
-      max-width: 820px;
+      max-width: 860px;
       color: rgba(255,255,255,0.82);
       line-height: 1.6;
       font-size: 16px;
@@ -83,7 +80,33 @@
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
-      margin: 18px 0 22px;
+      margin: 18px 0 14px;
+    }
+
+    .searchbar {
+      display: flex;
+      gap: 12px;
+      margin: 0 0 22px;
+      flex-wrap: wrap;
+    }
+
+    .search-input {
+      flex: 1 1 420px;
+      min-width: 280px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 13px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      background: #fff;
+      color: var(--text);
+      box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+    }
+
+    .search-input:focus {
+      outline: none;
+      border-color: #a5b4fc;
+      box-shadow: 0 0 0 4px rgba(99,102,241,0.12);
     }
 
     button {
@@ -431,8 +454,8 @@
     <section class="hero">
       <h1>Amazon Importer → Shopify</h1>
       <p>
-        Importa rapidamente le tue inserzioni Amazon già presenti in Seller Central e crea prodotti in bozza su Shopify,
-        con titolo, immagini, descrizione, prezzo, SKU, EAN, peso e quantità.
+        Mostra solo le inserzioni Amazon che non esistono ancora su Shopify.
+        Ricerca rapida per parola chiave, SKU o ASIN e importazione in bozza con un clic.
       </p>
     </section>
 
@@ -441,6 +464,17 @@
       <button class="secondary" onclick="checkStatus()">Controlla stato</button>
       <button class="accent" onclick="loadListings(true)">Carica inserzioni Amazon</button>
       <button class="ghost" id="loadMoreBtn" onclick="loadMoreListings()">Carica altre</button>
+    </div>
+
+    <div class="searchbar">
+      <input
+        id="searchInput"
+        class="search-input"
+        type="text"
+        placeholder="Cerca per titolo, SKU o ASIN..."
+        oninput="applySearchFilter()"
+      />
+      <button class="secondary" onclick="clearSearch()">Pulisci ricerca</button>
     </div>
 
     <div class="status-card">
@@ -455,7 +489,7 @@
 
     <div class="summary-grid">
       <div class="summary-card">
-        <div class="summary-label">Inserzioni caricate</div>
+        <div class="summary-label">Inserzioni visibili</div>
         <div class="summary-value" id="totalLoaded">0</div>
       </div>
       <div class="summary-card">
@@ -475,8 +509,8 @@
     <section class="panel">
       <div class="panel-header">
         <div>
-          <h2>Catalogo Amazon</h2>
-          <p>Elenco ordinato delle inserzioni recuperate dal tuo account seller.</p>
+          <h2>Catalogo Amazon filtrato</h2>
+          <p>Vengono mostrati solo gli articoli Amazon che non risultano già presenti su Shopify.</p>
         </div>
       </div>
 
@@ -513,6 +547,7 @@
 
   <script>
     let allListings = [];
+    let filteredListings = [];
     let amazonNextToken = null;
     let pagesLoaded = 0;
     let importedCount = 0;
@@ -536,7 +571,7 @@
     }
 
     function updateSummary() {
-      document.getElementById('totalLoaded').textContent = String(allListings.length);
+      document.getElementById('totalLoaded').textContent = String(filteredListings.length);
       document.getElementById('pageCounter').textContent = String(pagesLoaded);
       document.getElementById('importedCounter').textContent = String(importedCount);
       document.getElementById('hasMoreCounter').textContent = amazonNextToken ? 'Sì' : 'No';
@@ -547,7 +582,7 @@
 
       document.getElementById('footerNote').textContent = amazonNextToken
         ? 'Sono disponibili altre pagine Amazon. Puoi continuare con “Carica altre”.'
-        : (allListings.length
+        : (filteredListings.length
             ? 'Hai raggiunto l’ultima pagina disponibile per questo caricamento.'
             : 'Pronto per il primo caricamento.');
     }
@@ -578,6 +613,7 @@
       try {
         if (reset) {
           allListings = [];
+          filteredListings = [];
           amazonNextToken = null;
           pagesLoaded = 0;
           renderListings([]);
@@ -586,7 +622,7 @@
 
         let url = '/api/amazon/listings?pageSize=20';
         if (amazonNextToken) {
-          url += `&nextToken=${encodeURIComponent(amazonNextToken)}`;
+          url += `&pageToken=${encodeURIComponent(amazonNextToken)}`;
         }
 
         log('Caricamento inserzioni Amazon...');
@@ -602,10 +638,10 @@
         allListings = [...allListings, ...items];
         pagesLoaded += 1;
 
-        renderListings(allListings);
+        applySearchFilter(false);
         updateSummary();
 
-        log(`Trovate ${items.length} inserzioni in questa pagina. Totale caricato: ${allListings.length}.`);
+        log(`Ricevute ${items.length} nuove inserzioni Amazon filtrate. Totale visibile: ${filteredListings.length}.`);
         if (amazonNextToken) {
           log('È disponibile una pagina successiva Amazon.');
         } else {
@@ -625,6 +661,39 @@
       await loadListings(false);
     }
 
+    function applySearchFilter(writeLog = true) {
+      const term = (document.getElementById('searchInput').value || '').trim().toLowerCase();
+
+      if (!term) {
+        filteredListings = [...allListings];
+      } else {
+        filteredListings = allListings.filter((item) => {
+          const haystack = [
+            item.title || '',
+            item.sku || '',
+            item.asin || ''
+          ].join(' ').toLowerCase();
+
+          return haystack.includes(term);
+        });
+      }
+
+      renderListings(filteredListings);
+      updateSummary();
+
+      if (writeLog) {
+        log(term
+          ? `Filtro ricerca applicato: "${term}" - risultati visibili: ${filteredListings.length}.`
+          : `Filtro ricerca rimosso - risultati visibili: ${filteredListings.length}.`
+        );
+      }
+    }
+
+    function clearSearch() {
+      document.getElementById('searchInput').value = '';
+      applySearchFilter();
+    }
+
     function renderListings(items) {
       const root = document.getElementById('listings');
       root.innerHTML = '';
@@ -632,8 +701,8 @@
       if (!items.length) {
         root.innerHTML = `
           <div class="empty-state">
-            <strong>Nessuna inserzione caricata</strong>
-            Premi “Carica inserzioni Amazon” per iniziare.
+            <strong>Nessuna inserzione visibile</strong>
+            Carica altre pagine oppure modifica il filtro di ricerca.
           </div>
         `;
         return;
@@ -714,9 +783,14 @@
         }
 
         importedCount += 1;
+
+        allListings = allListings.filter((item) => item.sku !== sku);
+        filteredListings = filteredListings.filter((item) => item.sku !== sku);
+
+        renderListings(filteredListings);
         updateSummary();
 
-        log(`Import completato per SKU ${sku}: ${JSON.stringify(result)}`);
+        log(`Import completato per SKU ${sku}. Articolo rimosso dalla lista visibile.`);
         alert(`Prodotto importato correttamente su Shopify.\nSKU: ${sku}`);
       } catch (e) {
         log('Errore import: ' + e.message);
