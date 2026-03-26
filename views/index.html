@@ -88,6 +88,7 @@
       gap: 12px;
       margin: 0 0 22px;
       flex-wrap: wrap;
+      align-items: center;
     }
 
     .search-input {
@@ -104,6 +105,25 @@
     }
 
     .search-input:focus {
+      outline: none;
+      border-color: #a5b4fc;
+      box-shadow: 0 0 0 4px rgba(99,102,241,0.12);
+    }
+
+    .sort-select {
+      min-width: 260px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 13px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      background: #fff;
+      color: var(--text);
+      box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+      cursor: pointer;
+    }
+
+    .sort-select:focus {
       outline: none;
       border-color: #a5b4fc;
       box-shadow: 0 0 0 4px rgba(99,102,241,0.12);
@@ -142,6 +162,16 @@
 
     button.import-btn:hover {
       background: #f9fafb;
+      transform: translateY(-1px);
+    }
+
+    button.bulk-btn {
+      background: #111827;
+      color: #fff;
+    }
+
+    button.bulk-btn:hover {
+      background: #1f2937;
       transform: translateY(-1px);
     }
 
@@ -203,7 +233,7 @@
 
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 16px;
       margin-bottom: 20px;
     }
@@ -258,6 +288,32 @@
       font-size: 14px;
     }
 
+    .mass-tools {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--border);
+      background: #fcfdff;
+    }
+
+    .check-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      user-select: none;
+    }
+
+    .mini-note {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
     .table-wrap {
       overflow-x: auto;
     }
@@ -265,7 +321,7 @@
     .table-head,
     .table-row {
       display: grid;
-      grid-template-columns: 112px minmax(360px, 1.5fr) 170px 120px 140px;
+      grid-template-columns: 54px 112px minmax(360px, 1.5fr) 170px 120px 170px 140px;
       gap: 16px;
       align-items: center;
       padding: 16px 22px;
@@ -293,6 +349,19 @@
 
     .table-row:last-child {
       border-bottom: 0;
+    }
+
+    .check-col {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .row-check,
+    .head-check {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
     }
 
     .thumb {
@@ -352,6 +421,7 @@
 
     .pill.asin { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
     .pill.status { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+    .pill.date { background: #faf5ff; color: #7c3aed; border-color: #ddd6fe; }
 
     .sku-value {
       font-family: "Consolas", "SFMono-Regular", monospace;
@@ -378,6 +448,13 @@
       letter-spacing: 0.04em;
       text-transform: uppercase;
       margin-top: 4px;
+    }
+
+    .date-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #374151;
+      line-height: 1.5;
     }
 
     .footer-tools {
@@ -435,7 +512,7 @@
       font-size: 18px;
     }
 
-    @media (max-width: 1200px) {
+    @media (max-width: 1280px) {
       .summary-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
@@ -444,7 +521,7 @@
     @media (max-width: 900px) {
       .page { padding: 16px; }
       .hero h1 { font-size: 32px; }
-      .table-head, .table-row { min-width: 980px; }
+      .table-head, .table-row { min-width: 1180px; }
       .summary-grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -455,7 +532,8 @@
       <h1>Amazon Importer → Shopify</h1>
       <p>
         Mostra solo le inserzioni Amazon che non esistono ancora su Shopify.
-        Ricerca rapida per parola chiave, SKU o ASIN e importazione in bozza con un clic.
+        Ricerca rapida per parola chiave, SKU o ASIN, ordinamento per data Amazon
+        e importazione singola o massiva mantenendo la grafica attuale.
       </p>
     </section>
 
@@ -474,6 +552,18 @@
         placeholder="Cerca per titolo, SKU o ASIN..."
         oninput="applySearchFilter()"
       />
+
+      <select id="sortSelect" class="sort-select" onchange="applySearchFilter()">
+        <option value="recent_desc">Ordina: più recenti prima</option>
+        <option value="recent_asc">Ordina: meno recenti prima</option>
+        <option value="title_asc">Ordina: titolo A → Z</option>
+        <option value="title_desc">Ordina: titolo Z → A</option>
+        <option value="price_desc">Ordina: prezzo più alto</option>
+        <option value="price_asc">Ordina: prezzo più basso</option>
+        <option value="sku_asc">Ordina: SKU A → Z</option>
+        <option value="sku_desc">Ordina: SKU Z → A</option>
+      </select>
+
       <button class="secondary" onclick="clearSearch()">Pulisci ricerca</button>
     </div>
 
@@ -501,6 +591,10 @@
         <div class="summary-value" id="importedCounter">0</div>
       </div>
       <div class="summary-card">
+        <div class="summary-label">Selezionati</div>
+        <div class="summary-value" id="selectedCounter">0</div>
+      </div>
+      <div class="summary-card">
         <div class="summary-label">Altre pagine Amazon</div>
         <div class="summary-value" id="hasMoreCounter">No</div>
       </div>
@@ -514,12 +608,27 @@
         </div>
       </div>
 
+      <div class="mass-tools">
+        <label class="check-inline">
+          <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this.checked)" />
+          <span>Seleziona tutti i visibili</span>
+        </label>
+
+        <button class="bulk-btn" id="bulkImportBtn" onclick="importSelected()" disabled>
+          Importa selezionati
+        </button>
+
+        <div class="mini-note" id="selectionNote">Nessun prodotto selezionato.</div>
+      </div>
+
       <div class="table-wrap">
         <div class="table-head">
+          <div class="check-col"><input type="checkbox" class="head-check" id="headCheck" onchange="toggleSelectAll(this.checked)" /></div>
           <div>Immagine</div>
           <div>Prodotto</div>
           <div>SKU</div>
           <div>Prezzo</div>
+          <div>Data Amazon</div>
           <div>Azione</div>
         </div>
 
@@ -551,6 +660,7 @@
     let amazonNextToken = null;
     let pagesLoaded = 0;
     let importedCount = 0;
+    let selectedSkus = new Set();
 
     function log(msg) {
       const box = document.getElementById('logBox');
@@ -574,6 +684,7 @@
       document.getElementById('totalLoaded').textContent = String(filteredListings.length);
       document.getElementById('pageCounter').textContent = String(pagesLoaded);
       document.getElementById('importedCounter').textContent = String(importedCount);
+      document.getElementById('selectedCounter').textContent = String(selectedSkus.size);
       document.getElementById('hasMoreCounter').textContent = amazonNextToken ? 'Sì' : 'No';
 
       const disabled = !amazonNextToken;
@@ -585,6 +696,19 @@
         : (filteredListings.length
             ? 'Hai raggiunto l’ultima pagina disponibile per questo caricamento.'
             : 'Pronto per il primo caricamento.');
+
+      const bulkBtn = document.getElementById('bulkImportBtn');
+      bulkBtn.disabled = selectedSkus.size === 0;
+
+      document.getElementById('selectionNote').textContent = selectedSkus.size
+        ? `${selectedSkus.size} prodotto/i selezionato/i per l'importazione massiva.`
+        : 'Nessun prodotto selezionato.';
+
+      syncSelectAllCheckboxes();
+    }
+
+    function connectShopify() {
+      window.location.href = '/shopify/install';
     }
 
     async function checkStatus() {
@@ -605,10 +729,6 @@
       }
     }
 
-    function connectShopify() {
-      window.location.href = '/shopify/install';
-    }
-
     async function loadListings(reset = false) {
       try {
         if (reset) {
@@ -616,6 +736,7 @@
           filteredListings = [];
           amazonNextToken = null;
           pagesLoaded = 0;
+          selectedSkus.clear();
           renderListings([]);
           log('Reset elenco inserzioni Amazon...');
         }
@@ -633,7 +754,7 @@
           throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
         }
 
-        const items = data.listings || [];
+        const items = Array.isArray(data.listings) ? data.listings : [];
         amazonNextToken = data.nextToken || null;
         allListings = [...allListings, ...items];
         pagesLoaded += 1;
@@ -663,6 +784,7 @@
 
     function applySearchFilter(writeLog = true) {
       const term = (document.getElementById('searchInput').value || '').trim().toLowerCase();
+      const sortMode = document.getElementById('sortSelect').value;
 
       if (!term) {
         filteredListings = [...allListings];
@@ -678,6 +800,9 @@
         });
       }
 
+      filteredListings = sortListings(filteredListings, sortMode);
+
+      cleanupSelection();
       renderListings(filteredListings);
       updateSummary();
 
@@ -689,9 +814,122 @@
       }
     }
 
+    function sortListings(items, sortMode) {
+      const copy = [...items];
+
+      copy.sort((a, b) => {
+        if (sortMode === 'recent_asc') {
+          return safeTime(a.createdAt) - safeTime(b.createdAt);
+        }
+
+        if (sortMode === 'recent_desc') {
+          return safeTime(b.createdAt) - safeTime(a.createdAt);
+        }
+
+        if (sortMode === 'title_asc') {
+          return safeText(a.title).localeCompare(safeText(b.title), 'it');
+        }
+
+        if (sortMode === 'title_desc') {
+          return safeText(b.title).localeCompare(safeText(a.title), 'it');
+        }
+
+        if (sortMode === 'price_asc') {
+          return safeNumber(a.price) - safeNumber(b.price);
+        }
+
+        if (sortMode === 'price_desc') {
+          return safeNumber(b.price) - safeNumber(a.price);
+        }
+
+        if (sortMode === 'sku_asc') {
+          return safeText(a.sku).localeCompare(safeText(b.sku), 'it');
+        }
+
+        if (sortMode === 'sku_desc') {
+          return safeText(b.sku).localeCompare(safeText(a.sku), 'it');
+        }
+
+        return safeTime(b.createdAt) - safeTime(a.createdAt);
+      });
+
+      return copy;
+    }
+
+    function safeTime(value) {
+      if (!value) return 0;
+      const time = new Date(value).getTime();
+      return Number.isNaN(time) ? 0 : time;
+    }
+
+    function safeText(value) {
+      return String(value || '').trim();
+    }
+
+    function safeNumber(value) {
+      const num = Number(String(value || '0').replace(',', '.'));
+      return Number.isNaN(num) ? 0 : num;
+    }
+
     function clearSearch() {
       document.getElementById('searchInput').value = '';
       applySearchFilter();
+    }
+
+    function cleanupSelection() {
+      const visibleSkuSet = new Set(filteredListings.map(item => String(item.sku || '')));
+      selectedSkus = new Set([...selectedSkus].filter(sku => visibleSkuSet.has(sku)));
+    }
+
+    function toggleListingSelection(sku, checked) {
+      const normalizedSku = String(sku || '');
+      if (!normalizedSku) return;
+
+      if (checked) {
+        selectedSkus.add(normalizedSku);
+      } else {
+        selectedSkus.delete(normalizedSku);
+      }
+
+      updateSummary();
+    }
+
+    function toggleSelectAll(checked) {
+      const visibleSkus = filteredListings
+        .map(item => String(item.sku || ''))
+        .filter(Boolean);
+
+      if (checked) {
+        for (const sku of visibleSkus) {
+          selectedSkus.add(sku);
+        }
+      } else {
+        for (const sku of visibleSkus) {
+          selectedSkus.delete(sku);
+        }
+      }
+
+      renderListings(filteredListings);
+      updateSummary();
+    }
+
+    function syncSelectAllCheckboxes() {
+      const visibleSkus = filteredListings
+        .map(item => String(item.sku || ''))
+        .filter(Boolean);
+
+      const totalVisible = visibleSkus.length;
+      const selectedVisible = visibleSkus.filter(sku => selectedSkus.has(sku)).length;
+      const allChecked = totalVisible > 0 && selectedVisible === totalVisible;
+      const partial = selectedVisible > 0 && selectedVisible < totalVisible;
+
+      const top = document.getElementById('selectAllCheckbox');
+      const head = document.getElementById('headCheck');
+
+      for (const el of [top, head]) {
+        el.checked = allChecked;
+        el.indeterminate = partial;
+      }
     }
 
     function renderListings(items) {
@@ -717,11 +955,23 @@
         const safeSku = escapeHtml(item.sku || '-');
         const safePrice = escapeHtml(item.price || '-');
         const statusText = Array.isArray(item.status) && item.status.length ? item.status.join(', ') : 'ATTIVO';
+        const safeStatusText = escapeHtml(statusText);
+        const dateLabel = formatAmazonDate(item.createdAt);
+        const isChecked = selectedSkus.has(String(item.sku || ''));
 
         row.innerHTML = `
+          <div class="check-col">
+            <input
+              type="checkbox"
+              class="row-check"
+              ${isChecked ? 'checked' : ''}
+              onchange="toggleListingSelection('${jsEscape(item.sku || '')}', this.checked)"
+            />
+          </div>
+
           <div>
             ${item.imageUrl
-              ? `<div class="thumb"><img src="${item.imageUrl}" alt=""></div>`
+              ? `<div class="thumb"><img src="${escapeHtml(item.imageUrl)}" alt=""></div>`
               : `<div class="thumb empty">NO IMG</div>`
             }
           </div>
@@ -730,7 +980,8 @@
             <div class="product-title">${safeTitle}</div>
             <div class="meta-row">
               <span class="pill asin">ASIN: ${safeAsin}</span>
-              <span class="pill status">${escapeHtml(statusText)}</span>
+              <span class="pill status">${safeStatusText}</span>
+              <span class="pill date">${escapeHtml(dateLabel.short)}</span>
             </div>
           </div>
 
@@ -743,12 +994,38 @@
           </div>
 
           <div>
+            <div class="date-value">${escapeHtml(dateLabel.full)}</div>
+          </div>
+
+          <div>
             <button class="import-btn" onclick="importSku('${encodeURIComponent(item.sku)}', this)">Importa</button>
           </div>
         `;
 
         root.appendChild(row);
       }
+    }
+
+    function formatAmazonDate(value) {
+      if (!value) {
+        return {
+          short: 'Data non disponibile',
+          full: 'Non disponibile'
+        };
+      }
+
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) {
+        return {
+          short: 'Data non disponibile',
+          full: 'Non disponibile'
+        };
+      }
+
+      return {
+        short: d.toLocaleDateString('it-IT'),
+        full: d.toLocaleString('it-IT')
+      };
     }
 
     async function importSku(encodedSku, buttonEl) {
@@ -786,6 +1063,7 @@
 
         allListings = allListings.filter((item) => item.sku !== sku);
         filteredListings = filteredListings.filter((item) => item.sku !== sku);
+        selectedSkus.delete(sku);
 
         renderListings(filteredListings);
         updateSummary();
@@ -803,6 +1081,80 @@
       }
     }
 
+    async function importSelected() {
+      if (!selectedSkus.size) {
+        alert('Seleziona almeno un prodotto.');
+        return;
+      }
+
+      const btn = document.getElementById('bulkImportBtn');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Importazione...';
+
+      try {
+        const skuList = [...selectedSkus];
+
+        log(`Importazione massiva avviata per ${skuList.length} SKU.`);
+
+        const r = await fetch('/api/shopify/import-bulk', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ skus: skuList })
+        });
+
+        const data = await r.json();
+
+        if (!data.ok) {
+          throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+        }
+
+        const results = Array.isArray(data.results) ? data.results : [];
+        const created = results.filter(x => x.created === true).length;
+        const duplicates = results.filter(x => x.duplicate === true).length;
+        const failed = results.filter(x => x.error).length;
+
+        importedCount += created;
+
+        const importedOrHandledSkus = new Set(results.map(x => x.sku).filter(Boolean));
+        allListings = allListings.filter(item => !importedOrHandledSkus.has(item.sku));
+        filteredListings = filteredListings.filter(item => !importedOrHandledSkus.has(item.sku));
+
+        selectedSkus.clear();
+
+        renderListings(filteredListings);
+        updateSummary();
+
+        log(`Import massiva completata. Creati: ${created}, duplicati: ${duplicates}, errori: ${failed}.`);
+
+        for (const row of results) {
+          if (row.created) {
+            log(`OK ${row.sku}: importato.`);
+          } else if (row.duplicate) {
+            log(`SKIP ${row.sku}: già presente su Shopify.`);
+          } else if (row.error) {
+            log(`ERRORE ${row.sku}: ${row.error}`);
+          }
+        }
+
+        alert(
+          `Importazione massiva completata.\n\n` +
+          `Importati: ${created}\n` +
+          `Duplicati: ${duplicates}\n` +
+          `Errori: ${failed}`
+        );
+      } catch (e) {
+        log('Errore import massiva: ' + e.message);
+        alert('Errore importazione massiva:\n' + e.message);
+      } finally {
+        btn.disabled = selectedSkus.size === 0;
+        btn.textContent = originalText;
+        updateSummary();
+      }
+    }
+
     function escapeHtml(str) {
       return String(str)
         .replaceAll('&', '&amp;')
@@ -810,6 +1162,12 @@
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#039;');
+    }
+
+    function jsEscape(str) {
+      return String(str)
+        .replaceAll('\\', '\\\\')
+        .replaceAll("'", "\\'");
     }
 
     checkStatus();
