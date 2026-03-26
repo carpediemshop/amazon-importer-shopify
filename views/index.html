@@ -187,6 +187,17 @@
       transform: translateY(-1px);
     }
 
+    button.more-results-btn {
+      background: #fff;
+      color: #3730a3;
+      border-color: #c7d2fe;
+    }
+
+    button.more-results-btn:hover {
+      background: #eef2ff;
+      transform: translateY(-1px);
+    }
+
     button:disabled {
       opacity: 0.6;
       cursor: not-allowed;
@@ -477,6 +488,7 @@
       padding: 18px 22px;
       background: #fcfdff;
       border-top: 1px solid var(--border);
+      flex-wrap: wrap;
     }
 
     .footer-note {
@@ -745,7 +757,10 @@
 
       <div class="footer-tools">
         <div class="footer-note" id="footerNote">Pronto per il primo caricamento.</div>
-        <div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <button class="more-results-btn" id="moreSearchResultsBtn" onclick="loadMoreSearchResults()" style="display:none;">
+            Vedi altri risultati
+          </button>
           <button class="ghost" id="footerLoadMoreBtn" onclick="loadMoreListings()">Carica altre</button>
         </div>
       </div>
@@ -773,6 +788,11 @@
     let searchDebounceTimer = null;
     let currentSearchRequestId = 0;
     let lastSearchedTerm = '';
+
+    let currentSearchResumePageToken = null;
+    let searchHasMore = false;
+    let searchTimedOut = false;
+    let currentSearchLoadingMore = false;
 
     function log(msg) {
       const box = document.getElementById('logBox');
@@ -810,12 +830,24 @@
       return searchMode ? 'Ricerca' : 'Lista';
     }
 
+    function updateSearchMoreButton() {
+      const btn = document.getElementById('moreSearchResultsBtn');
+
+      if (searchMode && searchHasMore) {
+        btn.style.display = 'inline-block';
+        btn.disabled = currentSearchLoadingMore;
+        btn.textContent = currentSearchLoadingMore ? 'Carico altri risultati...' : 'Vedi altri risultati';
+      } else {
+        btn.style.display = 'none';
+      }
+    }
+
     function updateSummary() {
       document.getElementById('totalLoaded').textContent = String(filteredListings.length);
       document.getElementById('pageCounter').textContent = String(pagesLoaded);
       document.getElementById('importedCounter').textContent = String(importedCount);
       document.getElementById('selectedCounter').textContent = String(selectedSkus.size);
-      document.getElementById('hasMoreCounter').textContent = searchMode ? '—' : (amazonNextToken ? 'Sì' : 'No');
+      document.getElementById('hasMoreCounter').textContent = searchMode ? (searchHasMore ? 'Sì' : 'No') : (amazonNextToken ? 'Sì' : 'No');
       document.getElementById('modeCounter').textContent = getCurrentModeLabel();
 
       const disabled = searchMode || !amazonNextToken;
@@ -823,7 +855,9 @@
       document.getElementById('footerLoadMoreBtn').disabled = disabled;
 
       if (searchMode) {
-        document.getElementById('footerNote').textContent = 'Stai visualizzando risultati di ricerca globali su Amazon importabile.';
+        document.getElementById('footerNote').textContent = searchHasMore
+          ? 'Questi sono i primi risultati della ricerca. Puoi chiedere altri risultati con il pulsante dedicato.'
+          : 'Stai visualizzando i risultati della ricerca globale su Amazon importabile.';
         document.getElementById('panelDescription').textContent = 'Risultati ottenuti cercando in tutto il catalogo Amazon importabile, non solo nelle pagine già caricate.';
       } else {
         document.getElementById('panelDescription').textContent = 'Vengono mostrati solo gli articoli Amazon che non risultano già presenti su Shopify.';
@@ -842,6 +876,7 @@
         : 'Nessun prodotto selezionato.';
 
       syncSelectAllCheckboxes();
+      updateSearchMoreButton();
     }
 
     function connectShopify() {
@@ -864,18 +899,7 @@
           throw new Error(data.message || 'Errore scollegamento Shopify');
         }
 
-        allListings = [];
-        filteredListings = [];
-        amazonNextToken = null;
-        pagesLoaded = 0;
-        importedCount = 0;
-        selectedSkus.clear();
-        searchMode = false;
-        searchResults = [];
-        autoLoadedOnce = false;
-        shopifyConnectedNow = false;
-        lastSearchedTerm = '';
-        document.getElementById('searchInput').value = '';
+        resetAllState();
 
         renderListings([]);
         updateSummary();
@@ -888,6 +912,25 @@
       } finally {
         hideLoading();
       }
+    }
+
+    function resetAllState() {
+      allListings = [];
+      filteredListings = [];
+      amazonNextToken = null;
+      pagesLoaded = 0;
+      importedCount = 0;
+      selectedSkus.clear();
+      searchMode = false;
+      searchResults = [];
+      autoLoadedOnce = false;
+      shopifyConnectedNow = false;
+      lastSearchedTerm = '';
+      currentSearchResumePageToken = null;
+      searchHasMore = false;
+      searchTimedOut = false;
+      currentSearchLoadingMore = false;
+      document.getElementById('searchInput').value = '';
     }
 
     async function checkStatus() {
@@ -927,6 +970,10 @@
           searchMode = false;
           searchResults = [];
           lastSearchedTerm = '';
+          currentSearchResumePageToken = null;
+          searchHasMore = false;
+          searchTimedOut = false;
+          currentSearchLoadingMore = false;
           renderListings([]);
           if (!silentAuto) {
             log('Reset elenco inserzioni Amazon...');
@@ -1036,6 +1083,9 @@
 
       try {
         selectedSkus.clear();
+        currentSearchResumePageToken = null;
+        searchHasMore = false;
+        searchTimedOut = false;
 
         if (writeManualLog) {
           log(`Ricerca globale su Amazon importabile: "${term}"...`);
@@ -1057,6 +1107,9 @@
         searchMode = true;
         searchResults = Array.isArray(data.listings) ? data.listings : [];
         lastSearchedTerm = term;
+        currentSearchResumePageToken = data.nextResumePageToken || null;
+        searchTimedOut = !!data.timedOut;
+        searchHasMore = !!currentSearchResumePageToken;
 
         applyCurrentView();
         updateSummary();
@@ -1065,7 +1118,9 @@
         log(`Ricerca automatica completata per "${term}". Trovati ${searchResults.length} risultati importabili${elapsed}.`);
 
         if (data.timedOut) {
-          log('Ricerca interrotta per limite tempo: mostrati i migliori risultati trovati finora.');
+          log('Ricerca interrotta per limite tempo: puoi usare "Vedi altri risultati" per continuare da dove si è fermata.');
+        } else if (searchHasMore) {
+          log('Sono disponibili altri risultati per la stessa keyword.');
         }
       } catch (e) {
         if (requestId !== currentSearchRequestId) {
@@ -1079,6 +1134,74 @@
           btn.textContent = oldText;
           hideLoading();
         }
+      }
+    }
+
+    async function loadMoreSearchResults() {
+      if (!searchMode) return;
+      if (!lastSearchedTerm) return;
+      if (!currentSearchResumePageToken) {
+        searchHasMore = false;
+        updateSummary();
+        return;
+      }
+
+      currentSearchLoadingMore = true;
+      updateSummary();
+
+      try {
+        showLoading('Altri risultati', `Sto continuando la ricerca per "${lastSearchedTerm}"...`);
+
+        const excludeSkus = searchResults
+          .map(x => String(x.sku || '').trim())
+          .filter(Boolean)
+          .join(',');
+
+        const url =
+          `/api/amazon/search` +
+          `?q=${encodeURIComponent(lastSearchedTerm)}` +
+          `&limit=20` +
+          `&resumePageToken=${encodeURIComponent(currentSearchResumePageToken)}` +
+          `&excludeSkus=${encodeURIComponent(excludeSkus)}`;
+
+        const r = await fetch(url);
+        const data = await r.json();
+
+        if (!data.ok) {
+          throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+        }
+
+        const newItems = Array.isArray(data.listings) ? data.listings : [];
+        const existingSkuSet = new Set(searchResults.map(x => String(x.sku || '').trim()));
+
+        for (const item of newItems) {
+          const sku = String(item.sku || '').trim();
+          if (!sku || existingSkuSet.has(sku)) continue;
+          existingSkuSet.add(sku);
+          searchResults.push(item);
+        }
+
+        currentSearchResumePageToken = data.nextResumePageToken || null;
+        searchTimedOut = !!data.timedOut;
+        searchHasMore = !!currentSearchResumePageToken;
+
+        applyCurrentView();
+        updateSummary();
+
+        log(`Aggiunti ${newItems.length} nuovi risultati per "${lastSearchedTerm}". Totale risultati attuali: ${searchResults.length}.`);
+
+        if (data.timedOut) {
+          log('Anche questa continuazione si è fermata per limite tempo. Puoi premere ancora "Vedi altri risultati".');
+        } else if (!searchHasMore) {
+          log('Non ci sono altri risultati disponibili per questa keyword.');
+        }
+      } catch (e) {
+        log('Errore caricamento altri risultati: ' + e.message);
+        alert('Errore caricamento altri risultati:\n' + e.message);
+      } finally {
+        currentSearchLoadingMore = false;
+        updateSummary();
+        hideLoading();
       }
     }
 
@@ -1157,6 +1280,11 @@
       searchMode = false;
       searchResults = [];
       lastSearchedTerm = '';
+      currentSearchResumePageToken = null;
+      searchHasMore = false;
+      searchTimedOut = false;
+      currentSearchLoadingMore = false;
+
       applyCurrentView();
 
       if (writeLog) {
