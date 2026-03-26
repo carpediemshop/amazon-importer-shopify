@@ -79,17 +79,20 @@ function pickListingSummary(item) {
     price = String(attrs.purchasable_offer[0].our_price[0].schedule[0].value_with_tax);
   }
 
+  const barcode = findBarcode(attrs);
+
   return {
     sku: item.sku,
     asin,
     title,
     imageUrl,
     status: item.status || [],
-    price
+    price,
+    barcode
   };
 }
 
-async function getAmazonListings({ pageSize = 20, nextToken = null } = {}) {
+async function getAmazonListings({ pageSize = 20, pageToken = null } = {}) {
   const sellerId = requireEnv('AMAZON_SELLER_ID');
   const marketplaceId = requireEnv('AMAZON_MARKETPLACE_ID');
 
@@ -102,8 +105,8 @@ async function getAmazonListings({ pageSize = 20, nextToken = null } = {}) {
     includedData: 'summaries,attributes,offers'
   };
 
-  if (nextToken) {
-    params.nextToken = nextToken;
+  if (pageToken) {
+    params.pageToken = pageToken;
   }
 
   const response = await client.get(`/listings/2021-08-01/items/${sellerId}`, {
@@ -152,8 +155,7 @@ async function getAmazonListingDetail(sku) {
   const brand = firstNonEmpty([
     summary.brand,
     getAttributeValue(attributes, 'brand'),
-    getAttributeValue(attributes, 'manufacturer'),
-    getAttributeValue(attributes, 'supplier_declared_dg_hz_regulation')
+    getAttributeValue(attributes, 'manufacturer')
   ]);
 
   const descriptionHtml = buildDescriptionHtml(attributes, sku);
@@ -185,9 +187,7 @@ async function getAmazonListingDetail(sku) {
   }
 
   const barcode = findBarcode(attributes);
-
   const quantity = getAmazonQuantity(item);
-
   const weight = findWeight(attributes);
 
   return {
@@ -211,8 +211,7 @@ function buildDescriptionHtml(attributes, sku) {
   const productDescription = collectAttributeStrings(attributes, [
     'product_description',
     'description',
-    'item_description',
-    'generic_keyword'
+    'item_description'
   ]);
 
   for (const text of productDescription) {
@@ -237,32 +236,11 @@ function buildDescriptionHtml(attributes, sku) {
     ? `<ul>${bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`
     : '';
 
-  const specs = [];
-
-  pushSpec(specs, 'Marca', firstNonEmpty([
-    getAttributeValue(attributes, 'brand'),
-    getAttributeValue(attributes, 'manufacturer')
-  ]));
-  pushSpec(specs, 'Modello', getAttributeValue(attributes, 'model_name'));
-  pushSpec(specs, 'Colore', getAttributeValue(attributes, 'color'));
-  pushSpec(specs, 'Materiale', getAttributeValue(attributes, 'material'));
-  pushSpec(specs, 'Taglia', getAttributeValue(attributes, 'size'));
-
-  const specHtml = specs.length
-    ? `<h3>Dettagli prodotto</h3><ul>${specs.map((s) => `<li><strong>${escapeHtml(s.label)}:</strong> ${escapeHtml(s.value)}</li>`).join('')}</ul>`
-    : '';
-
-  const html = `${introParts.join('')}${bulletHtml}${specHtml}`.trim();
+  const html = `${introParts.join('')}${bulletHtml}`.trim();
 
   if (html) return html;
 
   return `<p>Prodotto importato da Amazon SKU ${escapeHtml(sku)}</p>`;
-}
-
-function pushSpec(specs, label, value) {
-  if (value) {
-    specs.push({ label, value });
-  }
 }
 
 function getAmazonQuantity(item) {
@@ -294,26 +272,6 @@ function findBarcode(attributes) {
     }
   }
 
-  const deepMatches = deepCollectValues(attributes, (path, value) => {
-    const p = path.toLowerCase();
-    return (
-      typeof value === 'string' &&
-      (
-        p.includes('ean') ||
-        p.includes('gtin') ||
-        p.includes('upc') ||
-        p.includes('isbn') ||
-        p.includes('externally_assigned_product_identifier')
-      )
-    );
-  });
-
-  for (const value of deepMatches) {
-    if (looksLikeBarcode(value)) {
-      return onlyDigits(value);
-    }
-  }
-
   return null;
 }
 
@@ -326,16 +284,6 @@ function findWeight(attributes) {
 
   for (const key of preferredPaths) {
     const entry = getAttributeEntry(attributes, key);
-    const normalized = normalizeWeightEntry(entry);
-    if (normalized) return normalized;
-  }
-
-  const deepEntries = deepCollectEntries(attributes, (path, entry) => {
-    const p = path.toLowerCase();
-    return p.includes('weight');
-  });
-
-  for (const entry of deepEntries) {
     const normalized = normalizeWeightEntry(entry);
     if (normalized) return normalized;
   }
@@ -466,54 +414,6 @@ function extractAnyString(value) {
   }
 
   return null;
-}
-
-function deepCollectValues(obj, predicate, path = '') {
-  const results = [];
-
-  function walk(value, currentPath) {
-    if (predicate(currentPath, value)) {
-      results.push(value);
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((v, i) => walk(v, `${currentPath}[${i}]`));
-      return;
-    }
-
-    if (value && typeof value === 'object') {
-      for (const [k, v] of Object.entries(value)) {
-        walk(v, currentPath ? `${currentPath}.${k}` : k);
-      }
-    }
-  }
-
-  walk(obj, path);
-  return results;
-}
-
-function deepCollectEntries(obj, predicate, path = '') {
-  const results = [];
-
-  function walk(value, currentPath) {
-    if (predicate(currentPath, value)) {
-      results.push(value);
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((v, i) => walk(v, `${currentPath}[${i}]`));
-      return;
-    }
-
-    if (value && typeof value === 'object') {
-      for (const [k, v] of Object.entries(value)) {
-        walk(v, currentPath ? `${currentPath}.${k}` : k);
-      }
-    }
-  }
-
-  walk(obj, path);
-  return results;
 }
 
 function looksLikeBarcode(value) {
