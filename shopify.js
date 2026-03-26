@@ -1,5 +1,42 @@
-const axios = require('axios');
+const express = require('express');
+const session = require('express-session');
 const crypto = require('crypto');
+const path = require('path');
+
+const {
+  getAmazonListings,
+  getAmazonListingDetail
+} = require('./amazon');
+
+const {
+  buildShopifyInstallUrl,
+  verifyShopifyCallbackHmac,
+  exchangeCodeForToken,
+  createOrRejectShopifyProduct,
+  getExistingKeysMap
+} = require('./shopify');
+
+const app = express();
+app.set('trust proxy', 1);
+
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'change-me-now',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: true,
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 1000 * 60 * 60 * 12
+    }
+  })
+);
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -9,432 +46,257 @@ function requireEnv(name) {
   return value;
 }
 
-function getScopes() {
-  return 'read_products,write_products,read_inventory,write_inventory,read_locations';
+function getBaseUrl(req) {
+  return process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
 }
 
-function buildShopifyInstallUrl({ shop, state, redirectUri }) {
-  const clientId = requireEnv('SHOPIFY_CLIENT_ID');
+function getShopifyStoreDomain() {
+  return requireEnv('SHOPIFY_STORE_DOMAIN');
+}
 
-  const params = new URLSearchParams({
-    client_id: clientId,
-    scope: getScopes(),
-    redirect_uri: redirectUri,
-    state
+let shopifyAccessToken = null;
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'index.html'));
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    app: 'amazon-importer-shopify',
+    hasShopifyToken: !!shopifyAccessToken,
+    shop: process.env.SHOPIFY_STORE_DOMAIN || null
   });
+});
 
-  return `https://${shop}/admin/oauth/authorize?${params.toString()}`;
-}
+app.get('/shopify/install', (req, res) => {
+  try {
+    const shop = getShopifyStoreDomain();
+    const state = crypto.randomBytes(16).toString('hex');
+    req.session.shopifyState = state;
 
-function verifyShopifyCallbackHmac(query, clientSecret) {
-  const { hmac, signature, ...rest } = query;
+    const redirectUri = `${getBaseUrl(req)}/shopify/callback`;
+    const url = buildShopifyInstallUrl({
+      shop,
+      state,
+      redirectUri
+    });
 
-  const message = Object.keys(rest)
-    .sort()
-    .map((key) => {
-      const value = Array.isArray(rest[key]) ? rest[key].join(',') : rest[key];
-      return `${key}=${value}`;
-    })
-    .join('&');
+    return res.redirect(url);
+  } catch (error) {
+    console.error('Shopify install error:', error.message);
+    return res.status(500).send(`Errore Shopify install: ${error.message}`);
+  }
+});
 
-  const generated = crypto
-    .createHmac('sha256', clientSecret)
-    .update(message)
-    .digest('hex');
+app.get('/shopify/callback', async (req, res) => {
+  try {
+    const { code, hmac, state, shop, host } = req.query;
 
-  return generated === hmac;
-}
+    if (!code || !hmac || !state || !shop) {
+      return res.status(400).send('Parametri callback Shopify mancanti.');
+    }
 
-async function exchangeCodeForToken({ shop, code, redirectUri }) {
-  const clientId = requireEnv('SHOPIFY_CLIENT_ID');
-  const clientSecret = requireEnv('SHOPIFY_CLIENT_SECRET');
+    if (!req.session.shopifyState || req.session.shopifyState !== state) {
+      return res.status(400).send('State Shopify non valido.');
+    }
 
-  const response = await axios.post(
-    `https://${shop}/admin/oauth/access_token`,
-    {
-      client_id: clientId,
-      client_secret: clientSecret,
+    const valid = verifyShopifyCallbackHmac(req.query, process.env.SHOPIFY_CLIENT_SECRET);
+    if (!valid) {
+      return res.status(400).send('HMAC Shopify non valido.');
+    }
+
+    const redirectUri = `${getBaseUrl(req)}/shopify/callback`;
+
+    const tokenResponse = await exchangeCodeForToken({
+      shop,
       code,
-      redirect_uri: redirectUri
-    },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
-    }
-  );
+      redirectUri
+    });
 
-  return response.data;
-}
+    shopifyAccessToken = tokenResponse.access_token;
+    req.session.shopifyInstalled = true;
 
-async function shopifyGraphQL(accessToken, query, variables = {}) {
-  const shop = requireEnv('SHOPIFY_STORE_DOMAIN');
-  const apiVersion = requireEnv('SHOPIFY_API_VERSION');
+    const adminUrl = host
+      ? `https://admin.shopify.com/store/${shop.replace('.myshopify.com', '')}/apps`
+      : null;
 
-  const response = await axios.post(
-    `https://${shop}/admin/api/${apiVersion}/graphql.json`,
-    { query, variables },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': accessToken
-      },
-      timeout: 30000
-    }
-  );
-
-  if (response.data.errors) {
-    throw new Error(JSON.stringify(response.data.errors));
-  }
-
-  return response.data.data;
-}
-
-async function createOrRejectShopifyProduct({ accessToken, detail }) {
-  const duplicate = await findDuplicateVariant(accessToken, detail);
-
-  if (duplicate) {
-    return {
-      created: false,
-      duplicate: true,
-      reason: 'SKU già presente su Shopify',
-      existing: duplicate
-    };
-  }
-
-  const location = await getFirstLocation(accessToken);
-  const created = await createShopifyProduct(accessToken, detail);
-
-  const product = created.product;
-  const firstVariant = created.firstVariant;
-
-  await updateVariantData(accessToken, product.id, firstVariant.id, detail);
-
-  const refreshedVariant = await getVariantById(accessToken, firstVariant.id);
-
-  if (detail.quantity > 0 && refreshedVariant?.inventoryItem?.id && location?.id) {
-    await ensureInventory(accessToken, refreshedVariant.inventoryItem.id, location.id, detail.quantity);
-  }
-
-  return {
-    created: true,
-    duplicate: false,
-    product,
-    variant: refreshedVariant || firstVariant
-  };
-}
-
-async function findDuplicateVariant(accessToken, detail) {
-  const queries = [];
-
-  if (detail.sku) queries.push(`sku:${escapeSearch(detail.sku)}`);
-  if (detail.barcode) queries.push(`barcode:${escapeSearch(detail.barcode)}`);
-
-  for (const query of queries) {
-    const gql = `
-      query DuplicateVariantSearch($query: String!) {
-        productVariants(first: 5, query: $query) {
-          nodes {
-            id
-            sku
-            barcode
-            product {
-              id
-              title
-              handle
-              status
+    return res.send(`
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Shopify collegato</title>
+          <link rel="icon" type="image/jpeg" href="/favicon.jpg" />
+          <style>
+            body {
+              font-family: Inter, Arial, sans-serif;
+              background: #f5f7fb;
+              padding: 40px;
+              color: #111827;
             }
-          }
-        }
-      }
-    `;
-
-    const data = await shopifyGraphQL(accessToken, gql, { query });
-    const node = data.productVariants?.nodes?.[0];
-    if (node) return node;
-  }
-
-  return null;
-}
-
-async function getFirstLocation(accessToken) {
-  const gql = `
-    query FirstLocation {
-      locations(first: 1) {
-        nodes {
-          id
-          name
-        }
-      }
-    }
-  `;
-
-  const data = await shopifyGraphQL(accessToken, gql);
-  return data.locations?.nodes?.[0] || null;
-}
-
-async function createShopifyProduct(accessToken, detail) {
-  const tags = [
-    'amazon-imported',
-    detail.asin ? `amazon-asin:${detail.asin}` : null,
-    detail.sku ? `amazon-sku:${detail.sku}` : null,
-    detail.brand ? normalizeTag(detail.brand) : null
-  ].filter(Boolean);
-
-  const productCreateMutation = `
-    mutation productCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
-      productCreate(product: $product, media: $media) {
-        product {
-          id
-          title
-          handle
-          status
-          vendor
-          variants(first: 1) {
-            nodes {
-              id
-              sku
-              barcode
-              price
-              inventoryItem {
-                id
-                sku
-                tracked
-              }
+            .card {
+              max-width: 720px;
+              margin: 0 auto;
+              background: #ffffff;
+              border-radius: 18px;
+              padding: 32px;
+              box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
+              border: 1px solid #e5e7eb;
             }
-          }
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-  `;
-
-  const media = (detail.imageUrls || []).map((url) => ({
-    originalSource: url,
-    mediaContentType: 'IMAGE'
-  }));
-
-  const variables = {
-    product: {
-      title: detail.title,
-      descriptionHtml: detail.descriptionHtml,
-      vendor: detail.brand || 'Amazon Import',
-      productType: 'Amazon Import',
-      tags,
-      status: 'DRAFT'
-    },
-    media
-  };
-
-  const created = await shopifyGraphQL(accessToken, productCreateMutation, variables);
-  const result = created.productCreate;
-
-  if (result.userErrors && result.userErrors.length) {
-    throw new Error(JSON.stringify(result.userErrors));
-  }
-
-  const product = result.product;
-  const firstVariant = product?.variants?.nodes?.[0];
-
-  if (!firstVariant?.id) {
-    throw new Error('Variant iniziale Shopify non trovata dopo productCreate.');
-  }
-
-  return { product, firstVariant };
-}
-
-async function updateVariantData(accessToken, productId, variantId, detail) {
-  const variantMutation = `
-    mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          sku
-          barcode
-          price
-          inventoryItem {
-            id
-            sku
-            tracked
-            measurement {
-              weight {
-                value
-                unit
-              }
+            h2 {
+              margin-top: 0;
+              margin-bottom: 10px;
             }
-          }
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-  `;
-
-  const inventoryItem = {
-    sku: detail.sku || '',
-    tracked: true,
-    requiresShipping: true
-  };
-
-  if (detail.weight?.value) {
-    inventoryItem.measurement = {
-      weight: {
-        value: detail.weight.value,
-        unit: detail.weight.unit || 'KILOGRAMS'
-      }
-    };
+            p {
+              color: #4b5563;
+              line-height: 1.6;
+            }
+            a.button {
+              display: inline-block;
+              margin-right: 12px;
+              margin-top: 10px;
+              padding: 12px 18px;
+              border-radius: 12px;
+              text-decoration: none;
+              font-weight: 600;
+              background: #111827;
+              color: #fff;
+            }
+            a.secondary {
+              background: #eef2ff;
+              color: #3730a3;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Collegamento Shopify completato</h2>
+            <p>Token ottenuto correttamente. L’app importer è pronta a creare prodotti in bozza su Shopify.</p>
+            <a class="button" href="/">Vai all'importer</a>
+            ${adminUrl ? `<a class="button secondary" href="${adminUrl}" target="_blank" rel="noreferrer">Apri Shopify Admin</a>` : ''}
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('Shopify callback error:', error.response?.data || error.message);
+    return res.status(500).send(
+      `Errore callback Shopify: ${JSON.stringify(error.response?.data || error.message)}`
+    );
   }
+});
 
-  const variables = {
-    productId,
-    variants: [
-      {
-        id: variantId,
-        price: detail.price || '0.00',
-        barcode: detail.barcode || null,
-        inventoryItem
-      }
-    ]
-  };
-
-  const updated = await shopifyGraphQL(accessToken, variantMutation, variables);
-
-  if (
-    updated.productVariantsBulkUpdate.userErrors &&
-    updated.productVariantsBulkUpdate.userErrors.length
-  ) {
-    throw new Error(JSON.stringify(updated.productVariantsBulkUpdate.userErrors));
-  }
-
-  return updated.productVariantsBulkUpdate.productVariants?.[0] || null;
-}
-
-async function ensureInventory(accessToken, inventoryItemId, locationId, quantity) {
-  const activateMutation = `
-    mutation InventoryActivate($inventoryItemId: ID!, $locationId: ID!, $available: Int!) {
-      inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, available: $available) {
-        inventoryLevel {
-          id
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-  `;
-
-  const activated = await shopifyGraphQL(accessToken, activateMutation, {
-    inventoryItemId,
-    locationId,
-    available: Number(quantity || 0)
+app.get('/api/status', (req, res) => {
+  res.json({
+    ok: true,
+    shopifyConnected: !!shopifyAccessToken
   });
+});
 
-  const activateErrors = activated.inventoryActivate?.userErrors || [];
-  if (activateErrors.length) {
-    const msg = JSON.stringify(activateErrors);
-    const ignorable = msg.toLowerCase().includes('already') || msg.toLowerCase().includes('stocked');
-    if (!ignorable) {
-      throw new Error(msg);
+app.get('/api/amazon/listings', async (req, res) => {
+  try {
+    if (!shopifyAccessToken) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Shopify non collegato. Premi "Collega Shopify" prima.'
+      });
     }
-  }
 
-  const setMutation = `
-    mutation InventorySet($input: InventorySetQuantitiesInput!) {
-      inventorySetQuantities(input: $input) {
-        inventoryAdjustmentGroup {
-          createdAt
-          reason
-          changes {
-            name
-            delta
-          }
-        }
-        userErrors {
-          field
-          message
-        }
+    const pageSize = Number(req.query.pageSize || 20);
+    let pageToken = req.query.pageToken || null;
+
+    // Continuiamo a scorrere Amazon finché non troviamo almeno 1 articolo non presente su Shopify
+    // oppure finché finiscono le pagine Amazon.
+    let finalItems = [];
+    let finalNextToken = null;
+    let scannedPages = 0;
+
+    while (scannedPages < 10 && finalItems.length < pageSize) {
+      const result = await getAmazonListings({ pageSize, pageToken });
+      const amazonItems = result.items || [];
+      finalNextToken = result.nextToken || null;
+
+      if (!amazonItems.length) {
+        break;
       }
-    }
-  `;
 
-  const setResult = await shopifyGraphQL(accessToken, setMutation, {
-    input: {
-      name: 'available',
-      reason: 'correction',
-      ignoreCompareQuantity: true,
-      referenceDocumentUri: `gid://amazon-importer/import/${inventoryItemId}`,
-      quantities: [
-        {
-          inventoryItemId,
-          locationId,
-          quantity: Number(quantity || 0)
-        }
-      ]
-    }
-  });
+      const existingMap = await getExistingKeysMap(shopifyAccessToken, amazonItems);
 
-  const setErrors = setResult.inventorySetQuantities?.userErrors || [];
-  if (setErrors.length) {
-    throw new Error(JSON.stringify(setErrors));
+      const filtered = amazonItems.filter((item) => {
+        const skuKey = item.sku ? `sku:${item.sku}` : null;
+        const barcodeKey = item.barcode ? `barcode:${item.barcode}` : null;
+
+        if (skuKey && existingMap[skuKey]) return false;
+        if (barcodeKey && existingMap[barcodeKey]) return false;
+
+        return true;
+      });
+
+      finalItems.push(...filtered);
+
+      if (!finalNextToken) break;
+      pageToken = finalNextToken;
+      scannedPages += 1;
+    }
+
+    res.json({
+      ok: true,
+      listings: finalItems.slice(0, pageSize),
+      nextToken: finalNextToken
+    });
+  } catch (error) {
+    console.error('Amazon listings error:', error.response?.data || error.message);
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
+    });
   }
-}
+});
 
-async function getVariantById(accessToken, variantId) {
-  const gql = `
-    query VariantById($id: ID!) {
-      productVariant(id: $id) {
-        id
-        sku
-        barcode
-        price
-        inventoryQuantity
-        inventoryItem {
-          id
-          sku
-          tracked
-          measurement {
-            weight {
-              value
-              unit
-            }
-          }
-        }
-        product {
-          id
-          title
-          vendor
-          handle
-          status
-        }
-      }
+app.get('/api/amazon/listing/:sku', async (req, res) => {
+  try {
+    const sku = req.params.sku;
+    const detail = await getAmazonListingDetail(sku);
+    res.json({ ok: true, detail });
+  } catch (error) {
+    console.error('Amazon detail error:', error.response?.data || error.message);
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+app.post('/api/shopify/import/:sku', async (req, res) => {
+  try {
+    if (!shopifyAccessToken) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Shopify non collegato. Premi "Collega Shopify" prima.'
+      });
     }
-  `;
 
-  const data = await shopifyGraphQL(accessToken, gql, { id: variantId });
-  return data.productVariant || null;
-}
+    const sku = req.params.sku;
+    const detail = await getAmazonListingDetail(sku);
 
-function normalizeTag(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-');
-}
+    const result = await createOrRejectShopifyProduct({
+      accessToken: shopifyAccessToken,
+      detail
+    });
 
-function escapeSearch(value) {
-  return String(value || '').replace(/([:\\()"])/g, '\\$1');
-}
+    res.json({
+      ok: true,
+      result
+    });
+  } catch (error) {
+    console.error('Shopify import error:', error.response?.data || error.message);
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
 
-module.exports = {
-  buildShopifyInstallUrl,
-  verifyShopifyCallbackHmac,
-  exchangeCodeForToken,
-  createOrRejectShopifyProduct
-};
+app.listen(process.env.PORT || 10000, () => {
+  console.log(`Server avviato sulla porta ${process.env.PORT || 10000}`);
+});
