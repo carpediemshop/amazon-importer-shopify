@@ -160,7 +160,7 @@ async function getImportableAmazonListingsPage({ accessToken, pageSize, pageToke
   let scannedPages = 0;
   let currentPageToken = pageToken || null;
 
-  while (scannedPages < 20 && finalItems.length < pageSize) {
+  while (scannedPages < 12 && finalItems.length < pageSize) {
     const result = await getAmazonListings({ pageSize, pageToken: currentPageToken });
     const amazonItems = result.items || [];
     finalNextToken = result.nextToken || null;
@@ -197,9 +197,6 @@ async function getImportableAmazonListingsPage({ accessToken, pageSize, pageToke
 let shopifyAccessToken = null;
 let shopifyConnectedShop = process.env.SHOPIFY_STORE_DOMAIN || null;
 
-/**
- * Ricarico il token Shopify salvato su file all'avvio
- */
 const persistedShopify = loadShopifyTokenFromFile();
 if (persistedShopify?.accessToken) {
   shopifyAccessToken = persistedShopify.accessToken;
@@ -395,7 +392,7 @@ app.get('/api/amazon/search', async (req, res) => {
     }
 
     const q = String(req.query.q || '').trim();
-    const limit = Math.min(Number(req.query.limit || 50), 100);
+    const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 40);
 
     if (!q) {
       return res.json({
@@ -403,17 +400,27 @@ app.get('/api/amazon/search', async (req, res) => {
         listings: [],
         totalMatches: 0,
         scannedPages: 0,
-        exhausted: true
+        exhausted: true,
+        timedOut: false
       });
     }
+
+    const startedAt = Date.now();
+    const maxSearchMs = 18000;
 
     let pageToken = null;
     let scannedPages = 0;
     let exhausted = false;
+    let timedOut = false;
     const matches = [];
     const seenSkus = new Set();
 
-    while (scannedPages < 50 && matches.length < limit) {
+    while (scannedPages < 12 && matches.length < limit) {
+      if (Date.now() - startedAt > maxSearchMs) {
+        timedOut = true;
+        break;
+      }
+
       const result = await getAmazonListings({ pageSize: 20, pageToken });
       const amazonItems = result.items || [];
       pageToken = result.nextToken || null;
@@ -423,27 +430,30 @@ app.get('/api/amazon/search', async (req, res) => {
         break;
       }
 
-      const existingMap = await getExistingKeysMap(shopifyAccessToken, amazonItems);
+      /**
+       * Prima filtro per keyword, così faccio controlli Shopify
+       * solo sugli articoli candidati e non su tutta la pagina.
+       */
+      const candidates = amazonItems.filter((item) => listingMatchesSearch(item, q));
 
-      const importableItems = amazonItems.filter((item) => {
-        const skuKey = item.sku ? `sku:${item.sku}` : null;
-        const barcodeKey = item.barcode ? `barcode:${item.barcode}` : null;
+      if (candidates.length) {
+        const existingMap = await getExistingKeysMap(shopifyAccessToken, candidates);
 
-        if (skuKey && existingMap[skuKey]) return false;
-        if (barcodeKey && existingMap[barcodeKey]) return false;
+        for (const item of candidates) {
+          if (seenSkus.has(item.sku)) continue;
 
-        return true;
-      });
+          const skuKey = item.sku ? `sku:${item.sku}` : null;
+          const barcodeKey = item.barcode ? `barcode:${item.barcode}` : null;
 
-      for (const item of importableItems) {
-        if (!listingMatchesSearch(item, q)) continue;
-        if (seenSkus.has(item.sku)) continue;
+          if (skuKey && existingMap[skuKey]) continue;
+          if (barcodeKey && existingMap[barcodeKey]) continue;
 
-        seenSkus.add(item.sku);
-        matches.push(item);
+          seenSkus.add(item.sku);
+          matches.push(item);
 
-        if (matches.length >= limit) {
-          break;
+          if (matches.length >= limit) {
+            break;
+          }
         }
       }
 
@@ -455,12 +465,16 @@ app.get('/api/amazon/search', async (req, res) => {
       }
     }
 
+    const elapsedMs = Date.now() - startedAt;
+
     res.json({
       ok: true,
       listings: sortListingsByRecentDesc(matches).slice(0, limit),
       totalMatches: matches.length,
       scannedPages,
-      exhausted
+      exhausted,
+      timedOut,
+      elapsedMs
     });
   } catch (error) {
     console.error('Amazon search error:', error.response?.data || error.message);
