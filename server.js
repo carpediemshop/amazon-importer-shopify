@@ -38,6 +38,14 @@ app.use(
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.get('/favicon.jpg', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'favicon.jpg'));
+});
+
+app.get('/favicon.ico', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'favicon.jpg'));
+});
+
 function requireEnv(name) {
   const value = process.env[name];
   if (!value) {
@@ -52,6 +60,16 @@ function getBaseUrl(req) {
 
 function getShopifyStoreDomain() {
   return requireEnv('SHOPIFY_STORE_DOMAIN');
+}
+
+function safeTime(value) {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function sortListingsByRecentDesc(items) {
+  return [...items].sort((a, b) => safeTime(b.createdAt) - safeTime(a.createdAt));
 }
 
 let shopifyAccessToken = null;
@@ -205,8 +223,6 @@ app.get('/api/amazon/listings', async (req, res) => {
     const pageSize = Number(req.query.pageSize || 20);
     let pageToken = req.query.pageToken || null;
 
-    // Continuiamo a scorrere Amazon finché non troviamo almeno 1 articolo non presente su Shopify
-    // oppure finché finiscono le pagine Amazon.
     let finalItems = [];
     let finalNextToken = null;
     let scannedPages = 0;
@@ -239,9 +255,11 @@ app.get('/api/amazon/listings', async (req, res) => {
       scannedPages += 1;
     }
 
+    finalItems = sortListingsByRecentDesc(finalItems).slice(0, pageSize);
+
     res.json({
       ok: true,
-      listings: finalItems.slice(0, pageSize),
+      listings: finalItems,
       nextToken: finalNextToken
     });
   } catch (error) {
@@ -290,6 +308,68 @@ app.post('/api/shopify/import/:sku', async (req, res) => {
     });
   } catch (error) {
     console.error('Shopify import error:', error.response?.data || error.message);
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+app.post('/api/shopify/import-bulk', async (req, res) => {
+  try {
+    if (!shopifyAccessToken) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Shopify non collegato. Premi "Collega Shopify" prima.'
+      });
+    }
+
+    const skus = Array.isArray(req.body.skus) ? req.body.skus : [];
+    const cleanedSkus = [...new Set(skus.map(x => String(x || '').trim()).filter(Boolean))];
+
+    if (!cleanedSkus.length) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Nessuno SKU ricevuto per l’importazione massiva.'
+      });
+    }
+
+    const results = [];
+
+    for (const sku of cleanedSkus) {
+      try {
+        const detail = await getAmazonListingDetail(sku);
+
+        const result = await createOrRejectShopifyProduct({
+          accessToken: shopifyAccessToken,
+          detail
+        });
+
+        results.push({
+          sku,
+          created: !!result.created,
+          duplicate: !!result.duplicate,
+          result
+        });
+      } catch (error) {
+        console.error(`Bulk import error for SKU ${sku}:`, error.response?.data || error.message);
+        results.push({
+          sku,
+          created: false,
+          duplicate: false,
+          error: typeof error.response?.data === 'string'
+            ? error.response.data
+            : (error.message || 'Errore sconosciuto')
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      results
+    });
+  } catch (error) {
+    console.error('Shopify bulk import error:', error.response?.data || error.message);
     res.status(500).json({
       ok: false,
       error: error.response?.data || error.message
