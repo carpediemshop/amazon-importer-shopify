@@ -12,7 +12,8 @@ const {
   buildShopifyInstallUrl,
   verifyShopifyCallbackHmac,
   exchangeCodeForToken,
-  createOrRejectShopifyProduct
+  createOrRejectShopifyProduct,
+  getExistingKeysMap
 } = require('./shopify');
 
 const app = express();
@@ -194,15 +195,54 @@ app.get('/api/status', (req, res) => {
 
 app.get('/api/amazon/listings', async (req, res) => {
   try {
-    const pageSize = Number(req.query.pageSize || 20);
-    const nextToken = req.query.nextToken || null;
+    if (!shopifyAccessToken) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Shopify non collegato. Premi "Collega Shopify" prima.'
+      });
+    }
 
-    const result = await getAmazonListings({ pageSize, nextToken });
+    const pageSize = Number(req.query.pageSize || 20);
+    let pageToken = req.query.pageToken || null;
+
+    // Continuiamo a scorrere Amazon finché non troviamo almeno 1 articolo non presente su Shopify
+    // oppure finché finiscono le pagine Amazon.
+    let finalItems = [];
+    let finalNextToken = null;
+    let scannedPages = 0;
+
+    while (scannedPages < 10 && finalItems.length < pageSize) {
+      const result = await getAmazonListings({ pageSize, pageToken });
+      const amazonItems = result.items || [];
+      finalNextToken = result.nextToken || null;
+
+      if (!amazonItems.length) {
+        break;
+      }
+
+      const existingMap = await getExistingKeysMap(shopifyAccessToken, amazonItems);
+
+      const filtered = amazonItems.filter((item) => {
+        const skuKey = item.sku ? `sku:${item.sku}` : null;
+        const barcodeKey = item.barcode ? `barcode:${item.barcode}` : null;
+
+        if (skuKey && existingMap[skuKey]) return false;
+        if (barcodeKey && existingMap[barcodeKey]) return false;
+
+        return true;
+      });
+
+      finalItems.push(...filtered);
+
+      if (!finalNextToken) break;
+      pageToken = finalNextToken;
+      scannedPages += 1;
+    }
 
     res.json({
       ok: true,
-      listings: result.items,
-      nextToken: result.nextToken
+      listings: finalItems.slice(0, pageSize),
+      nextToken: finalNextToken
     });
   } catch (error) {
     console.error('Amazon listings error:', error.response?.data || error.message);
