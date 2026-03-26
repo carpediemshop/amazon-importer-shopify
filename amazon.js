@@ -162,18 +162,6 @@ async function getAmazonListingDetail(sku) {
 
   const descriptionHtml = buildDescriptionHtml(attributes, sku);
 
-  const imageCandidates = [];
-
-  if (summary.mainImage?.link) {
-    imageCandidates.push(summary.mainImage.link);
-  }
-
-  if (Array.isArray(summary.otherProductImageUrls)) {
-    imageCandidates.push(...summary.otherProductImageUrls);
-  }
-
-  const uniqueImages = [...new Set(imageCandidates.filter(Boolean))];
-
   let price = null;
   const offers = item.offers || [];
   const firstOffer = Array.isArray(offers) ? offers[0] : null;
@@ -192,6 +180,16 @@ async function getAmazonListingDetail(sku) {
   const quantity = getAmazonQuantity(item);
   const weight = findWeight(attributes);
 
+  const listingImages = collectListingImages(item, summary, attributes);
+  const catalogImages = asin
+    ? await getCatalogImagesByAsin({ client, asin, marketplaceId })
+    : [];
+
+  const uniqueImages = [...new Set([
+    ...listingImages,
+    ...catalogImages
+  ].filter(Boolean))];
+
   return {
     sku,
     asin,
@@ -205,6 +203,155 @@ async function getAmazonListingDetail(sku) {
     weight,
     raw: item
   };
+}
+
+async function getCatalogImagesByAsin({ client, asin, marketplaceId }) {
+  try {
+    const response = await client.get(
+      `/catalog/2022-04-01/items/${encodeURIComponent(asin)}`,
+      {
+        params: {
+          marketplaceIds: marketplaceId,
+          includedData: 'images,summaries'
+        }
+      }
+    );
+
+    const item = response.data || {};
+    const imagesByMarketplace = Array.isArray(item.images) ? item.images : [];
+
+    const urls = [];
+
+    for (const block of imagesByMarketplace) {
+      if (!Array.isArray(block.images)) continue;
+
+      for (const img of block.images) {
+        if (img?.link) {
+          urls.push(img.link);
+        }
+      }
+    }
+
+    return dedupeUrls(urls);
+  } catch (error) {
+    console.warn(
+      `Catalog images fallback failed for ASIN ${asin}:`,
+      error.response?.data || error.message
+    );
+    return [];
+  }
+}
+
+function collectListingImages(item, summary, attributes) {
+  const urls = [];
+
+  if (summary?.mainImage?.link) {
+    urls.push(summary.mainImage.link);
+  }
+
+  if (summary?.main_image?.link) {
+    urls.push(summary.main_image.link);
+  }
+
+  if (Array.isArray(summary?.otherProductImageUrls)) {
+    urls.push(...summary.otherProductImageUrls.filter(Boolean));
+  }
+
+  if (Array.isArray(summary?.other_product_image_urls)) {
+    urls.push(...summary.other_product_image_urls.filter(Boolean));
+  }
+
+  if (Array.isArray(summary?.images)) {
+    for (const image of summary.images) {
+      if (typeof image === 'string') {
+        urls.push(image);
+      } else if (image?.link) {
+        urls.push(image.link);
+      }
+    }
+  }
+
+  if (Array.isArray(item?.images)) {
+    for (const block of item.images) {
+      if (Array.isArray(block?.images)) {
+        for (const img of block.images) {
+          if (img?.link) {
+            urls.push(img.link);
+          }
+        }
+      } else if (block?.link) {
+        urls.push(block.link);
+      }
+    }
+  }
+
+  urls.push(...collectImageUrlsFromAttributes(attributes));
+
+  return dedupeUrls(urls);
+}
+
+function collectImageUrlsFromAttributes(attributes) {
+  const urls = [];
+
+  walkAny(attributes, (node) => {
+    if (!node || typeof node !== 'object') return;
+
+    if (typeof node.link === 'string' && looksLikeImageUrl(node.link)) {
+      urls.push(node.link);
+    }
+
+    if (typeof node.url === 'string' && looksLikeImageUrl(node.url)) {
+      urls.push(node.url);
+    }
+
+    if (typeof node.value === 'string' && looksLikeImageUrl(node.value)) {
+      urls.push(node.value);
+    }
+  });
+
+  return dedupeUrls(urls);
+}
+
+function walkAny(value, visitor, seen = new Set()) {
+  if (value == null) return;
+  if (typeof value !== 'object') return;
+  if (seen.has(value)) return;
+
+  seen.add(value);
+  visitor(value);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      walkAny(item, visitor, seen);
+    }
+    return;
+  }
+
+  for (const nested of Object.values(value)) {
+    walkAny(nested, visitor, seen);
+  }
+}
+
+function looksLikeImageUrl(value) {
+  const str = String(value || '').trim().toLowerCase();
+  if (!str.startsWith('http://') && !str.startsWith('https://')) return false;
+
+  return (
+    str.includes('.jpg') ||
+    str.includes('.jpeg') ||
+    str.includes('.png') ||
+    str.includes('.webp') ||
+    str.includes('images-amazon') ||
+    str.includes('media-amazon')
+  );
+}
+
+function dedupeUrls(values) {
+  return [...new Set(
+    values
+      .map((v) => String(v || '').trim())
+      .filter(Boolean)
+  )];
 }
 
 function buildDescriptionHtml(attributes, sku) {
