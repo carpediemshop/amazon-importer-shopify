@@ -524,6 +524,76 @@
       font-size: 18px;
     }
 
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.34);
+      backdrop-filter: blur(2px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      padding: 20px;
+    }
+
+    .loading-overlay.show {
+      display: flex;
+    }
+
+    .loading-card {
+      width: min(420px, 100%);
+      background: rgba(255,255,255,0.98);
+      border: 1px solid #e5e7eb;
+      border-radius: 24px;
+      padding: 28px 24px;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(15,23,42,0.18);
+    }
+
+    .spinner-wrap {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 16px;
+      position: relative;
+    }
+
+    .spinner-ring {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 6px solid #e5e7eb;
+      border-top-color: #4f46e5;
+      animation: spin 0.9s linear infinite;
+    }
+
+    .spinner-dot {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background: #111827;
+      top: 29px;
+      left: 29px;
+      opacity: 0.9;
+    }
+
+    .loading-title {
+      font-size: 20px;
+      font-weight: 800;
+      color: #111827;
+      margin-bottom: 8px;
+    }
+
+    .loading-sub {
+      font-size: 14px;
+      color: #6b7280;
+      line-height: 1.6;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
     @media (max-width: 1280px) {
       .summary-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -539,6 +609,17 @@
   </style>
 </head>
 <body>
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-card">
+      <div class="spinner-wrap">
+        <div class="spinner-ring"></div>
+        <div class="spinner-dot"></div>
+      </div>
+      <div class="loading-title" id="loadingTitle">Sto lavorando…</div>
+      <div class="loading-sub" id="loadingSub">Attendi qualche secondo.</div>
+    </div>
+  </div>
+
   <div class="page">
     <section class="hero">
       <h1>Amazon Importer → Shopify</h1>
@@ -700,6 +781,16 @@
       box.scrollTop = box.scrollHeight;
     }
 
+    function showLoading(title, sub) {
+      document.getElementById('loadingTitle').textContent = title || 'Sto lavorando…';
+      document.getElementById('loadingSub').textContent = sub || 'Attendi qualche secondo.';
+      document.getElementById('loadingOverlay').classList.add('show');
+    }
+
+    function hideLoading() {
+      document.getElementById('loadingOverlay').classList.remove('show');
+    }
+
     function setStatus(connected, title, sub) {
       const dot = document.getElementById('statusDot');
       const titleEl = document.getElementById('statusTitle');
@@ -762,6 +853,7 @@
       if (!yes) return;
 
       try {
+        showLoading('Scollegamento Shopify', 'Sto rimuovendo il collegamento salvato...');
         const r = await fetch('/api/shopify/disconnect', {
           method: 'POST'
         });
@@ -793,6 +885,8 @@
       } catch (e) {
         log('Errore scollegamento Shopify: ' + e.message);
         alert('Errore scollegamento Shopify:\n' + e.message);
+      } finally {
+        hideLoading();
       }
     }
 
@@ -846,6 +940,7 @@
 
         if (!silentAuto) {
           log('Caricamento inserzioni Amazon...');
+          showLoading('Caricamento prodotti', 'Sto recuperando i prodotti Amazon importabili...');
         }
 
         const r = await fetch(url);
@@ -877,6 +972,8 @@
       } catch (e) {
         log('Errore listings: ' + e.message);
         alert('Errore caricamento inserzioni:\n' + e.message);
+      } finally {
+        hideLoading();
       }
     }
 
@@ -944,7 +1041,9 @@
           log(`Ricerca globale su Amazon importabile: "${term}"...`);
         }
 
-        const r = await fetch(`/api/amazon/search?q=${encodeURIComponent(term)}&limit=50`);
+        showLoading('Ricerca in corso', `Sto cercando "${term}" su Amazon importabile...`);
+
+        const r = await fetch(`/api/amazon/search?q=${encodeURIComponent(term)}&limit=20`);
         const data = await r.json();
 
         if (requestId !== currentSearchRequestId) {
@@ -962,7 +1061,12 @@
         applyCurrentView();
         updateSummary();
 
-        log(`Ricerca automatica completata per "${term}". Trovati ${searchResults.length} risultati importabili.`);
+        const elapsed = typeof data.elapsedMs === 'number' ? ` in ${Math.round(data.elapsedMs / 1000)} sec` : '';
+        log(`Ricerca automatica completata per "${term}". Trovati ${searchResults.length} risultati importabili${elapsed}.`);
+
+        if (data.timedOut) {
+          log('Ricerca interrotta per limite tempo: mostrati i migliori risultati trovati finora.');
+        }
       } catch (e) {
         if (requestId !== currentSearchRequestId) {
           return;
@@ -973,6 +1077,7 @@
         if (requestId === currentSearchRequestId) {
           btn.disabled = false;
           btn.textContent = oldText;
+          hideLoading();
         }
       }
     }
@@ -1225,6 +1330,7 @@
           buttonEl.textContent = 'Importo...';
         }
 
+        showLoading('Importazione prodotto', `Sto importando lo SKU ${sku} su Shopify...`);
         log(`Importazione SKU ${sku}...`);
 
         const r = await fetch(`/api/shopify/import/${encodeURIComponent(sku)}`, {
@@ -1261,6 +1367,7 @@
         log('Errore import: ' + e.message);
         alert('Errore import:\n' + e.message);
       } finally {
+        hideLoading();
         if (buttonEl) {
           buttonEl.disabled = false;
           buttonEl.textContent = originalLabel;
@@ -1282,6 +1389,7 @@
       try {
         const skuList = [...selectedSkus];
 
+        showLoading('Importazione massiva', `Sto importando ${skuList.length} prodotti selezionati...`);
         log(`Importazione massiva avviata per ${skuList.length} SKU.`);
 
         const r = await fetch('/api/shopify/import-bulk', {
@@ -1337,6 +1445,7 @@
         log('Errore import massiva: ' + e.message);
         alert('Errore importazione massiva:\n' + e.message);
       } finally {
+        hideLoading();
         btn.disabled = selectedSkus.size === 0;
         btn.textContent = originalText;
         updateSummary();
