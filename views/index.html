@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Amazon Importer → Shopify</title>
-  <link rel="icon" type="image/jpeg" href="/favicon.jpg" />
+  <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=2" />
   <style>
     :root{
       --bg:#f5f7fb;
@@ -233,7 +233,7 @@
 
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 16px;
       margin-bottom: 20px;
     }
@@ -532,7 +532,7 @@
       <h1>Amazon Importer → Shopify</h1>
       <p>
         Mostra solo le inserzioni Amazon che non esistono ancora su Shopify.
-        Ricerca rapida per parola chiave, SKU o ASIN, ordinamento per data Amazon
+        Ricerca globale su tutto il catalogo importabile, ordinamento per data Amazon
         e importazione singola o massiva mantenendo la grafica attuale.
       </p>
     </section>
@@ -549,11 +549,15 @@
         id="searchInput"
         class="search-input"
         type="text"
-        placeholder="Cerca per titolo, SKU o ASIN..."
-        oninput="applySearchFilter()"
+        placeholder="Cerca in tutto Amazon importabile per titolo, SKU o ASIN..."
+        onkeydown="handleSearchKey(event)"
       />
 
-      <select id="sortSelect" class="sort-select" onchange="applySearchFilter()">
+      <button class="accent" id="searchBtn" onclick="searchAllAmazonImportable()">
+        Cerca su tutto Amazon
+      </button>
+
+      <select id="sortSelect" class="sort-select" onchange="applyCurrentView()">
         <option value="recent_desc">Ordina: più recenti prima</option>
         <option value="recent_asc">Ordina: meno recenti prima</option>
         <option value="title_asc">Ordina: titolo A → Z</option>
@@ -598,13 +602,17 @@
         <div class="summary-label">Altre pagine Amazon</div>
         <div class="summary-value" id="hasMoreCounter">No</div>
       </div>
+      <div class="summary-card">
+        <div class="summary-label">Modalità</div>
+        <div class="summary-value" id="modeCounter">Lista</div>
+      </div>
     </div>
 
     <section class="panel">
       <div class="panel-header">
         <div>
           <h2>Catalogo Amazon filtrato</h2>
-          <p>Vengono mostrati solo gli articoli Amazon che non risultano già presenti su Shopify.</p>
+          <p id="panelDescription">Vengono mostrati solo gli articoli Amazon che non risultano già presenti su Shopify.</p>
         </div>
       </div>
 
@@ -635,7 +643,7 @@
         <div id="listings">
           <div class="empty-state">
             <strong>Nessuna inserzione caricata</strong>
-            Premi “Carica inserzioni Amazon” per iniziare.
+            Attendi il collegamento Shopify oppure premi “Carica inserzioni Amazon”.
           </div>
         </div>
       </div>
@@ -662,6 +670,11 @@
     let importedCount = 0;
     let selectedSkus = new Set();
 
+    let searchMode = false;
+    let searchResults = [];
+    let autoLoadedOnce = false;
+    let shopifyConnectedNow = false;
+
     function log(msg) {
       const box = document.getElementById('logBox');
       const now = new Date().toLocaleTimeString('it-IT');
@@ -680,22 +693,37 @@
       subEl.textContent = sub;
     }
 
+    function getCurrentSourceItems() {
+      return searchMode ? searchResults : allListings;
+    }
+
+    function getCurrentModeLabel() {
+      return searchMode ? 'Ricerca' : 'Lista';
+    }
+
     function updateSummary() {
       document.getElementById('totalLoaded').textContent = String(filteredListings.length);
       document.getElementById('pageCounter').textContent = String(pagesLoaded);
       document.getElementById('importedCounter').textContent = String(importedCount);
       document.getElementById('selectedCounter').textContent = String(selectedSkus.size);
-      document.getElementById('hasMoreCounter').textContent = amazonNextToken ? 'Sì' : 'No';
+      document.getElementById('hasMoreCounter').textContent = searchMode ? '—' : (amazonNextToken ? 'Sì' : 'No');
+      document.getElementById('modeCounter').textContent = getCurrentModeLabel();
 
-      const disabled = !amazonNextToken;
+      const disabled = searchMode || !amazonNextToken;
       document.getElementById('loadMoreBtn').disabled = disabled;
       document.getElementById('footerLoadMoreBtn').disabled = disabled;
 
-      document.getElementById('footerNote').textContent = amazonNextToken
-        ? 'Sono disponibili altre pagine Amazon. Puoi continuare con “Carica altre”.'
-        : (filteredListings.length
-            ? 'Hai raggiunto l’ultima pagina disponibile per questo caricamento.'
-            : 'Pronto per il primo caricamento.');
+      if (searchMode) {
+        document.getElementById('footerNote').textContent = 'Stai visualizzando risultati di ricerca globali su Amazon importabile.';
+        document.getElementById('panelDescription').textContent = 'Risultati ottenuti cercando in tutto il catalogo Amazon importabile, non solo nelle pagine già caricate.';
+      } else {
+        document.getElementById('panelDescription').textContent = 'Vengono mostrati solo gli articoli Amazon che non risultano già presenti su Shopify.';
+        document.getElementById('footerNote').textContent = amazonNextToken
+          ? 'Sono disponibili altre pagine Amazon. Puoi continuare con “Carica altre”.'
+          : (filteredListings.length
+              ? 'Hai raggiunto l’ultima pagina disponibile per questo caricamento.'
+              : 'Pronto per il primo caricamento.');
+      }
 
       const bulkBtn = document.getElementById('bulkImportBtn');
       bulkBtn.disabled = selectedSkus.size === 0;
@@ -716,20 +744,28 @@
         const r = await fetch('/api/status');
         const data = await r.json();
 
-        if (data.shopifyConnected) {
+        shopifyConnectedNow = !!data.shopifyConnected;
+
+        if (shopifyConnectedNow) {
           setStatus(true, 'Shopify collegato correttamente', 'L’app è autorizzata a creare prodotti in bozza.');
         } else {
           setStatus(false, 'Shopify non collegato', 'Premi “Collega Shopify” per autorizzare l’app.');
         }
 
         log('Status: ' + JSON.stringify(data));
+
+        if (shopifyConnectedNow && !autoLoadedOnce && allListings.length === 0 && !searchMode) {
+          autoLoadedOnce = true;
+          log('Shopify collegato: caricamento automatico dei primi 20 prodotti importabili...');
+          await loadListings(true, true);
+        }
       } catch (e) {
         setStatus(false, 'Errore controllo stato', e.message);
         log('Errore status: ' + e.message);
       }
     }
 
-    async function loadListings(reset = false) {
+    async function loadListings(reset = false, silentAuto = false) {
       try {
         if (reset) {
           allListings = [];
@@ -737,8 +773,12 @@
           amazonNextToken = null;
           pagesLoaded = 0;
           selectedSkus.clear();
+          searchMode = false;
+          searchResults = [];
           renderListings([]);
-          log('Reset elenco inserzioni Amazon...');
+          if (!silentAuto) {
+            log('Reset elenco inserzioni Amazon...');
+          }
         }
 
         let url = '/api/amazon/listings?pageSize=20';
@@ -746,7 +786,10 @@
           url += `&pageToken=${encodeURIComponent(amazonNextToken)}`;
         }
 
-        log('Caricamento inserzioni Amazon...');
+        if (!silentAuto) {
+          log('Caricamento inserzioni Amazon...');
+        }
+
         const r = await fetch(url);
         const data = await r.json();
 
@@ -759,13 +802,18 @@
         allListings = [...allListings, ...items];
         pagesLoaded += 1;
 
-        applySearchFilter(false);
+        applyCurrentView();
         updateSummary();
 
-        log(`Ricevute ${items.length} nuove inserzioni Amazon filtrate. Totale visibile: ${filteredListings.length}.`);
-        if (amazonNextToken) {
-          log('È disponibile una pagina successiva Amazon.');
+        if (silentAuto) {
+          log(`Caricamento automatico completato. Ricevute ${items.length} inserzioni iniziali.`);
         } else {
+          log(`Ricevute ${items.length} nuove inserzioni Amazon filtrate. Totale visibile: ${filteredListings.length}.`);
+        }
+
+        if (amazonNextToken && !silentAuto) {
+          log('È disponibile una pagina successiva Amazon.');
+        } else if (!amazonNextToken && !silentAuto) {
           log('Nessun’altra pagina Amazon disponibile.');
         }
       } catch (e) {
@@ -775,43 +823,74 @@
     }
 
     async function loadMoreListings() {
+      if (searchMode) {
+        log('Carica altre disattivato durante la modalità ricerca globale.');
+        return;
+      }
+
       if (!amazonNextToken) {
         log('Nessun’altra pagina da caricare.');
         return;
       }
+
       await loadListings(false);
     }
 
-    function applySearchFilter(writeLog = true) {
-      const term = (document.getElementById('searchInput').value || '').trim().toLowerCase();
-      const sortMode = document.getElementById('sortSelect').value;
+    function handleSearchKey(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        searchAllAmazonImportable();
+      }
+    }
+
+    async function searchAllAmazonImportable() {
+      const term = (document.getElementById('searchInput').value || '').trim();
 
       if (!term) {
-        filteredListings = [...allListings];
-      } else {
-        filteredListings = allListings.filter((item) => {
-          const haystack = [
-            item.title || '',
-            item.sku || '',
-            item.asin || ''
-          ].join(' ').toLowerCase();
-
-          return haystack.includes(term);
-        });
+        clearSearch();
+        return;
       }
 
-      filteredListings = sortListings(filteredListings, sortMode);
+      const btn = document.getElementById('searchBtn');
+      const oldText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Ricerca...';
 
+      try {
+        selectedSkus.clear();
+        log(`Ricerca globale su Amazon importabile: "${term}"...`);
+
+        const r = await fetch(`/api/amazon/search?q=${encodeURIComponent(term)}&limit=50`);
+        const data = await r.json();
+
+        if (!data.ok) {
+          throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+        }
+
+        searchMode = true;
+        searchResults = Array.isArray(data.listings) ? data.listings : [];
+
+        applyCurrentView();
+        updateSummary();
+
+        log(`Ricerca completata. Trovati ${searchResults.length} risultati importabili dopo scansione globale Amazon.`);
+      } catch (e) {
+        log('Errore ricerca globale: ' + e.message);
+        alert('Errore ricerca globale:\n' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = oldText;
+      }
+    }
+
+    function applyCurrentView() {
+      const sortMode = document.getElementById('sortSelect').value;
+      const source = getCurrentSourceItems();
+
+      filteredListings = sortListings(source, sortMode);
       cleanupSelection();
       renderListings(filteredListings);
       updateSummary();
-
-      if (writeLog) {
-        log(term
-          ? `Filtro ricerca applicato: "${term}" - risultati visibili: ${filteredListings.length}.`
-          : `Filtro ricerca rimosso - risultati visibili: ${filteredListings.length}.`
-        );
-      }
     }
 
     function sortListings(items, sortMode) {
@@ -873,7 +952,10 @@
 
     function clearSearch() {
       document.getElementById('searchInput').value = '';
-      applySearchFilter();
+      searchMode = false;
+      searchResults = [];
+      applyCurrentView();
+      log('Modalità ricerca globale disattivata. Ripristinata la lista caricata.');
     }
 
     function cleanupSelection() {
@@ -940,7 +1022,10 @@
         root.innerHTML = `
           <div class="empty-state">
             <strong>Nessuna inserzione visibile</strong>
-            Carica altre pagine oppure modifica il filtro di ricerca.
+            ${searchMode
+              ? 'Nessun risultato trovato nella ricerca globale Amazon importabile.'
+              : 'Attendi il caricamento automatico oppure carica altre pagine Amazon.'
+            }
           </div>
         `;
         return;
@@ -1062,6 +1147,7 @@
         importedCount += 1;
 
         allListings = allListings.filter((item) => item.sku !== sku);
+        searchResults = searchResults.filter((item) => item.sku !== sku);
         filteredListings = filteredListings.filter((item) => item.sku !== sku);
         selectedSkus.delete(sku);
 
@@ -1120,6 +1206,7 @@
 
         const importedOrHandledSkus = new Set(results.map(x => x.sku).filter(Boolean));
         allListings = allListings.filter(item => !importedOrHandledSkus.has(item.sku));
+        searchResults = searchResults.filter(item => !importedOrHandledSkus.has(item.sku));
         filteredListings = filteredListings.filter(item => !importedOrHandledSkus.has(item.sku));
 
         selectedSkus.clear();
