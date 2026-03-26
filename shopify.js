@@ -93,23 +93,33 @@ async function shopifyGraphQL(accessToken, query, variables = {}) {
 
 async function getExistingKeysMap(accessToken, amazonItems) {
   const map = {};
+  const tasks = [];
 
   for (const item of amazonItems) {
     if (item.sku) {
-      const foundBySku = await findVariantByQuery(accessToken, `sku:${escapeSearch(item.sku)}`);
-      if (foundBySku) {
-        map[`sku:${item.sku}`] = foundBySku;
-      }
+      tasks.push(
+        findVariantByQuery(accessToken, `sku:${escapeSearch(item.sku)}`)
+          .then((found) => {
+            if (found) {
+              map[`sku:${item.sku}`] = found;
+            }
+          })
+      );
     }
 
     if (item.barcode) {
-      const foundByBarcode = await findVariantByQuery(accessToken, `barcode:${escapeSearch(item.barcode)}`);
-      if (foundByBarcode) {
-        map[`barcode:${item.barcode}`] = foundByBarcode;
-      }
+      tasks.push(
+        findVariantByQuery(accessToken, `barcode:${escapeSearch(item.barcode)}`)
+          .then((found) => {
+            if (found) {
+              map[`barcode:${item.barcode}`] = found;
+            }
+          })
+      );
     }
   }
 
+  await Promise.all(tasks);
   return map;
 }
 
@@ -199,7 +209,7 @@ async function createShopifyProduct(accessToken, detail) {
 
   const productCreateMutation = `
     mutation productCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
-      productCreate(product: $product, media: $media) {
+      productCreate(product: $product, media: [CreateMediaInput!]) {
         product {
           id
           title
