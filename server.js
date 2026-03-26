@@ -72,6 +72,59 @@ function sortListingsByRecentDesc(items) {
   return [...items].sort((a, b) => safeTime(b.createdAt) - safeTime(a.createdAt));
 }
 
+function listingMatchesSearch(item, term) {
+  const needle = String(term || '').trim().toLowerCase();
+  if (!needle) return true;
+
+  const haystack = [
+    item?.title || '',
+    item?.sku || '',
+    item?.asin || ''
+  ].join(' ').toLowerCase();
+
+  return haystack.includes(needle);
+}
+
+async function getImportableAmazonListingsPage({ accessToken, pageSize, pageToken }) {
+  let finalItems = [];
+  let finalNextToken = null;
+  let scannedPages = 0;
+  let currentPageToken = pageToken || null;
+
+  while (scannedPages < 20 && finalItems.length < pageSize) {
+    const result = await getAmazonListings({ pageSize, pageToken: currentPageToken });
+    const amazonItems = result.items || [];
+    finalNextToken = result.nextToken || null;
+
+    if (!amazonItems.length) {
+      break;
+    }
+
+    const existingMap = await getExistingKeysMap(accessToken, amazonItems);
+
+    const filtered = amazonItems.filter((item) => {
+      const skuKey = item.sku ? `sku:${item.sku}` : null;
+      const barcodeKey = item.barcode ? `barcode:${item.barcode}` : null;
+
+      if (skuKey && existingMap[skuKey]) return false;
+      if (barcodeKey && existingMap[barcodeKey]) return false;
+
+      return true;
+    });
+
+    finalItems.push(...filtered);
+
+    if (!finalNextToken) break;
+    currentPageToken = finalNextToken;
+    scannedPages += 1;
+  }
+
+  return {
+    listings: sortListingsByRecentDesc(finalItems).slice(0, pageSize),
+    nextToken: finalNextToken
+  };
+}
+
 let shopifyAccessToken = null;
 
 app.get('/', (req, res) => {
@@ -144,7 +197,7 @@ app.get('/shopify/callback', async (req, res) => {
         <head>
           <meta charset="utf-8" />
           <title>Shopify collegato</title>
-          <link rel="icon" type="image/jpeg" href="/favicon.jpg" />
+          <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=2" />
           <style>
             body {
               font-family: Inter, Arial, sans-serif;
@@ -221,24 +274,69 @@ app.get('/api/amazon/listings', async (req, res) => {
     }
 
     const pageSize = Number(req.query.pageSize || 20);
-    let pageToken = req.query.pageToken || null;
+    const pageToken = req.query.pageToken || null;
 
-    let finalItems = [];
-    let finalNextToken = null;
+    const result = await getImportableAmazonListingsPage({
+      accessToken: shopifyAccessToken,
+      pageSize,
+      pageToken
+    });
+
+    res.json({
+      ok: true,
+      listings: result.listings,
+      nextToken: result.nextToken
+    });
+  } catch (error) {
+    console.error('Amazon listings error:', error.response?.data || error.message);
+    res.status(500).json({
+      ok: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+app.get('/api/amazon/search', async (req, res) => {
+  try {
+    if (!shopifyAccessToken) {
+      return res.status(401).json({
+        ok: false,
+        error: 'Shopify non collegato. Premi "Collega Shopify" prima.'
+      });
+    }
+
+    const q = String(req.query.q || '').trim();
+    const limit = Math.min(Number(req.query.limit || 50), 100);
+
+    if (!q) {
+      return res.json({
+        ok: true,
+        listings: [],
+        totalMatches: 0,
+        scannedPages: 0,
+        exhausted: true
+      });
+    }
+
+    let pageToken = null;
     let scannedPages = 0;
+    let exhausted = false;
+    const matches = [];
+    const seenSkus = new Set();
 
-    while (scannedPages < 10 && finalItems.length < pageSize) {
-      const result = await getAmazonListings({ pageSize, pageToken });
+    while (scannedPages < 50 && matches.length < limit) {
+      const result = await getAmazonListings({ pageSize: 50, pageToken });
       const amazonItems = result.items || [];
-      finalNextToken = result.nextToken || null;
+      pageToken = result.nextToken || null;
 
       if (!amazonItems.length) {
+        exhausted = true;
         break;
       }
 
       const existingMap = await getExistingKeysMap(shopifyAccessToken, amazonItems);
 
-      const filtered = amazonItems.filter((item) => {
+      const importableItems = amazonItems.filter((item) => {
         const skuKey = item.sku ? `sku:${item.sku}` : null;
         const barcodeKey = item.barcode ? `barcode:${item.barcode}` : null;
 
@@ -248,22 +346,35 @@ app.get('/api/amazon/listings', async (req, res) => {
         return true;
       });
 
-      finalItems.push(...filtered);
+      for (const item of importableItems) {
+        if (!listingMatchesSearch(item, q)) continue;
+        if (seenSkus.has(item.sku)) continue;
 
-      if (!finalNextToken) break;
-      pageToken = finalNextToken;
+        seenSkus.add(item.sku);
+        matches.push(item);
+
+        if (matches.length >= limit) {
+          break;
+        }
+      }
+
       scannedPages += 1;
-    }
 
-    finalItems = sortListingsByRecentDesc(finalItems).slice(0, pageSize);
+      if (!pageToken) {
+        exhausted = true;
+        break;
+      }
+    }
 
     res.json({
       ok: true,
-      listings: finalItems,
-      nextToken: finalNextToken
+      listings: sortListingsByRecentDesc(matches).slice(0, limit),
+      totalMatches: matches.length,
+      scannedPages,
+      exhausted
     });
   } catch (error) {
-    console.error('Amazon listings error:', error.response?.data || error.message);
+    console.error('Amazon search error:', error.response?.data || error.message);
     res.status(500).json({
       ok: false,
       error: error.response?.data || error.message
