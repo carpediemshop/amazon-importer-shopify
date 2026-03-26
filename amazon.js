@@ -80,6 +80,7 @@ function pickListingSummary(item) {
   }
 
   const barcode = findBarcode(attrs);
+  const createdAt = findAmazonDate(item, summary, attrs);
 
   return {
     sku: item.sku,
@@ -88,7 +89,8 @@ function pickListingSummary(item) {
     imageUrl,
     status: item.status || [],
     price,
-    barcode
+    barcode,
+    createdAt
   };
 }
 
@@ -286,6 +288,35 @@ function findWeight(attributes) {
     const entry = getAttributeEntry(attributes, key);
     const normalized = normalizeWeightEntry(entry);
     if (normalized) return normalized;
+  }
+
+  return null;
+}
+
+function findAmazonDate(item, summary, attributes) {
+  const candidates = [
+    item?.createdDate,
+    item?.creationDate,
+    item?.created_at,
+    item?.lastUpdatedDate,
+    item?.updatedAt,
+    summary?.createdDate,
+    summary?.creationDate,
+    summary?.created_at,
+    summary?.lastUpdatedDate,
+    summary?.updatedAt,
+    getAttributeValue(attributes, 'creation_date'),
+    getAttributeValue(attributes, 'created_date'),
+    getAttributeValue(attributes, 'publication_date'),
+    getAttributeValue(attributes, 'release_date')
+  ];
+
+  for (const value of candidates) {
+    if (!value) continue;
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
   }
 
   return null;
