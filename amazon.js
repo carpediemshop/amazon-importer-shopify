@@ -185,10 +185,10 @@ async function getAmazonListingDetail(sku) {
     ? await getCatalogImagesByAsin({ client, asin, marketplaceId })
     : [];
 
-  const uniqueImages = [...new Set([
+  const uniqueImages = dedupeAmazonImages([
     ...listingImages,
     ...catalogImages
-  ].filter(Boolean))];
+  ]);
 
   return {
     sku,
@@ -232,7 +232,7 @@ async function getCatalogImagesByAsin({ client, asin, marketplaceId }) {
       }
     }
 
-    return dedupeUrls(urls);
+    return dedupeAmazonImages(urls);
   } catch (error) {
     console.warn(
       `Catalog images fallback failed for ASIN ${asin}:`,
@@ -287,7 +287,7 @@ function collectListingImages(item, summary, attributes) {
 
   urls.push(...collectImageUrlsFromAttributes(attributes));
 
-  return dedupeUrls(urls);
+  return dedupeAmazonImages(urls);
 }
 
 function collectImageUrlsFromAttributes(attributes) {
@@ -309,7 +309,7 @@ function collectImageUrlsFromAttributes(attributes) {
     }
   });
 
-  return dedupeUrls(urls);
+  return dedupeAmazonImages(urls);
 }
 
 function walkAny(value, visitor, seen = new Set()) {
@@ -342,16 +342,59 @@ function looksLikeImageUrl(value) {
     str.includes('.png') ||
     str.includes('.webp') ||
     str.includes('images-amazon') ||
-    str.includes('media-amazon')
+    str.includes('media-amazon') ||
+    str.includes('m.media-amazon')
   );
 }
 
-function dedupeUrls(values) {
-  return [...new Set(
-    values
-      .map((v) => String(v || '').trim())
-      .filter(Boolean)
-  )];
+function dedupeAmazonImages(values) {
+  const out = [];
+  const seen = new Set();
+
+  for (const raw of values) {
+    const url = String(raw || '').trim();
+    if (!url) continue;
+
+    const key = buildImageDedupKey(url);
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    out.push(url);
+  }
+
+  return out;
+}
+
+function buildImageDedupKey(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase();
+    let pathname = parsed.pathname || '';
+
+    pathname = pathname.replace(/%2B/gi, '+');
+
+    const fileName = pathname.split('/').pop() || pathname;
+
+    const noExt = fileName.replace(/\.(jpg|jpeg|png|webp)$/i, '');
+
+    /**
+     * Amazon usa spesso suffissi tipo:
+     * ._AC_SX679_
+     * ._SL1500_
+     * ._QL40_
+     * ecc.
+     * Li rimuoviamo per riconoscere la stessa immagine.
+     */
+    const normalizedName = noExt
+      .replace(/\._[^.]+$/i, '')
+      .replace(/_[A-Z0-9,]+$/i, '')
+      .trim()
+      .toLowerCase();
+
+    return `${host}|${normalizedName}`;
+  } catch {
+    return String(rawUrl || '').trim().toLowerCase();
+  }
 }
 
 function buildDescriptionHtml(attributes, sku) {
