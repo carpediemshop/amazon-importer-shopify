@@ -18,6 +18,7 @@
       --accent-soft:#eef2ff;
       --success:#059669;
       --danger:#dc2626;
+      --danger-soft:#fef2f2;
       --shadow:0 16px 40px rgba(15,23,42,0.08);
     }
 
@@ -152,6 +153,17 @@
 
     button.ghost { background: var(--accent-soft); color: #3730a3; border-color: #c7d2fe; }
     button.ghost:hover { background: #e0e7ff; transform: translateY(-1px); }
+
+    button.danger {
+      background: var(--danger-soft);
+      color: var(--danger);
+      border-color: #fecaca;
+    }
+
+    button.danger:hover {
+      background: #fee2e2;
+      transform: translateY(-1px);
+    }
 
     button.import-btn {
       min-width: 108px;
@@ -539,6 +551,7 @@
 
     <div class="toolbar">
       <button class="primary" onclick="connectShopify()">Collega Shopify</button>
+      <button class="danger" onclick="disconnectShopify()">Scollega Shopify</button>
       <button class="secondary" onclick="checkStatus()">Controlla stato</button>
       <button class="accent" onclick="loadListings(true)">Carica inserzioni Amazon</button>
       <button class="ghost" id="loadMoreBtn" onclick="loadMoreListings()">Carica altre</button>
@@ -742,6 +755,45 @@
 
     function connectShopify() {
       window.location.href = '/shopify/install';
+    }
+
+    async function disconnectShopify() {
+      const yes = confirm('Vuoi davvero scollegare Shopify da questa app?');
+      if (!yes) return;
+
+      try {
+        const r = await fetch('/api/shopify/disconnect', {
+          method: 'POST'
+        });
+
+        const data = await r.json();
+
+        if (!data.ok) {
+          throw new Error(data.message || 'Errore scollegamento Shopify');
+        }
+
+        allListings = [];
+        filteredListings = [];
+        amazonNextToken = null;
+        pagesLoaded = 0;
+        importedCount = 0;
+        selectedSkus.clear();
+        searchMode = false;
+        searchResults = [];
+        autoLoadedOnce = false;
+        shopifyConnectedNow = false;
+        lastSearchedTerm = '';
+        document.getElementById('searchInput').value = '';
+
+        renderListings([]);
+        updateSummary();
+        setStatus(false, 'Shopify scollegato', 'Premi “Collega Shopify” per autorizzare di nuovo l’app.');
+        log('Shopify scollegato manualmente.');
+        alert('Shopify è stato scollegato correttamente.');
+      } catch (e) {
+        log('Errore scollegamento Shopify: ' + e.message);
+        alert('Errore scollegamento Shopify:\n' + e.message);
+      }
     }
 
     async function checkStatus() {
