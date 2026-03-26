@@ -532,7 +532,7 @@
       <h1>Amazon Importer → Shopify</h1>
       <p>
         Mostra solo le inserzioni Amazon che non esistono ancora su Shopify.
-        Ricerca globale su tutto il catalogo importabile, ordinamento per data Amazon
+        Ricerca globale automatica mentre scrivi, ordinamento per data Amazon
         e importazione singola o massiva mantenendo la grafica attuale.
       </p>
     </section>
@@ -549,11 +549,12 @@
         id="searchInput"
         class="search-input"
         type="text"
-        placeholder="Cerca in tutto Amazon importabile per titolo, SKU o ASIN..."
+        placeholder="Cerca automaticamente in tutto Amazon importabile per titolo, SKU o ASIN..."
+        oninput="handleSearchInput()"
         onkeydown="handleSearchKey(event)"
       />
 
-      <button class="accent" id="searchBtn" onclick="searchAllAmazonImportable()">
+      <button class="accent" id="searchBtn" onclick="searchAllAmazonImportable(true)">
         Cerca su tutto Amazon
       </button>
 
@@ -675,6 +676,10 @@
     let autoLoadedOnce = false;
     let shopifyConnectedNow = false;
 
+    let searchDebounceTimer = null;
+    let currentSearchRequestId = 0;
+    let lastSearchedTerm = '';
+
     function log(msg) {
       const box = document.getElementById('logBox');
       const now = new Date().toLocaleTimeString('it-IT');
@@ -775,6 +780,7 @@
           selectedSkus.clear();
           searchMode = false;
           searchResults = [];
+          lastSearchedTerm = '';
           renderListings([]);
           if (!silentAuto) {
             log('Reset elenco inserzioni Amazon...');
@@ -836,21 +842,44 @@
       await loadListings(false);
     }
 
-    function handleSearchKey(event) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        searchAllAmazonImportable();
-      }
-    }
-
-    async function searchAllAmazonImportable() {
+    function handleSearchInput() {
       const term = (document.getElementById('searchInput').value || '').trim();
 
+      clearTimeout(searchDebounceTimer);
+
       if (!term) {
-        clearSearch();
+        if (searchMode || lastSearchedTerm) {
+          clearSearch(false);
+        }
         return;
       }
 
+      searchDebounceTimer = setTimeout(() => {
+        searchAllAmazonImportable(false);
+      }, 550);
+    }
+
+    function handleSearchKey(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        clearTimeout(searchDebounceTimer);
+        searchAllAmazonImportable(true);
+      }
+    }
+
+    async function searchAllAmazonImportable(writeManualLog = true) {
+      const term = (document.getElementById('searchInput').value || '').trim();
+
+      if (!term) {
+        clearSearch(false);
+        return;
+      }
+
+      if (term === lastSearchedTerm && searchMode) {
+        return;
+      }
+
+      const requestId = ++currentSearchRequestId;
       const btn = document.getElementById('searchBtn');
       const oldText = btn.textContent;
       btn.disabled = true;
@@ -858,10 +887,17 @@
 
       try {
         selectedSkus.clear();
-        log(`Ricerca globale su Amazon importabile: "${term}"...`);
+
+        if (writeManualLog) {
+          log(`Ricerca globale su Amazon importabile: "${term}"...`);
+        }
 
         const r = await fetch(`/api/amazon/search?q=${encodeURIComponent(term)}&limit=50`);
         const data = await r.json();
+
+        if (requestId !== currentSearchRequestId) {
+          return;
+        }
 
         if (!data.ok) {
           throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
@@ -869,17 +905,23 @@
 
         searchMode = true;
         searchResults = Array.isArray(data.listings) ? data.listings : [];
+        lastSearchedTerm = term;
 
         applyCurrentView();
         updateSummary();
 
-        log(`Ricerca completata. Trovati ${searchResults.length} risultati importabili dopo scansione globale Amazon.`);
+        log(`Ricerca automatica completata per "${term}". Trovati ${searchResults.length} risultati importabili.`);
       } catch (e) {
+        if (requestId !== currentSearchRequestId) {
+          return;
+        }
         log('Errore ricerca globale: ' + e.message);
         alert('Errore ricerca globale:\n' + e.message);
       } finally {
-        btn.disabled = false;
-        btn.textContent = oldText;
+        if (requestId === currentSearchRequestId) {
+          btn.disabled = false;
+          btn.textContent = oldText;
+        }
       }
     }
 
@@ -950,12 +992,19 @@
       return Number.isNaN(num) ? 0 : num;
     }
 
-    function clearSearch() {
+    function clearSearch(writeLog = true) {
+      clearTimeout(searchDebounceTimer);
+      currentSearchRequestId += 1;
+
       document.getElementById('searchInput').value = '';
       searchMode = false;
       searchResults = [];
+      lastSearchedTerm = '';
       applyCurrentView();
-      log('Modalità ricerca globale disattivata. Ripristinata la lista caricata.');
+
+      if (writeLog) {
+        log('Modalità ricerca globale disattivata. Ripristinata la lista caricata.');
+      }
     }
 
     function cleanupSelection() {
