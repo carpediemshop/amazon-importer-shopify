@@ -393,6 +393,11 @@ app.get('/api/amazon/search', async (req, res) => {
 
     const q = String(req.query.q || '').trim();
     const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 40);
+    const resumePageToken = req.query.resumePageToken || null;
+    const excludeSkus = String(req.query.excludeSkus || '')
+      .split(',')
+      .map(x => String(x || '').trim())
+      .filter(Boolean);
 
     if (!q) {
       return res.json({
@@ -401,19 +406,21 @@ app.get('/api/amazon/search', async (req, res) => {
         totalMatches: 0,
         scannedPages: 0,
         exhausted: true,
-        timedOut: false
+        timedOut: false,
+        elapsedMs: 0,
+        nextResumePageToken: null
       });
     }
 
     const startedAt = Date.now();
     const maxSearchMs = 18000;
 
-    let pageToken = null;
+    let pageToken = resumePageToken;
     let scannedPages = 0;
     let exhausted = false;
     let timedOut = false;
     const matches = [];
-    const seenSkus = new Set();
+    const seenSkus = new Set(excludeSkus);
 
     while (scannedPages < 12 && matches.length < limit) {
       if (Date.now() - startedAt > maxSearchMs) {
@@ -430,16 +437,13 @@ app.get('/api/amazon/search', async (req, res) => {
         break;
       }
 
-      /**
-       * Prima filtro per keyword, così faccio controlli Shopify
-       * solo sugli articoli candidati e non su tutta la pagina.
-       */
       const candidates = amazonItems.filter((item) => listingMatchesSearch(item, q));
 
       if (candidates.length) {
         const existingMap = await getExistingKeysMap(shopifyAccessToken, candidates);
 
         for (const item of candidates) {
+          if (!item.sku) continue;
           if (seenSkus.has(item.sku)) continue;
 
           const skuKey = item.sku ? `sku:${item.sku}` : null;
@@ -474,7 +478,8 @@ app.get('/api/amazon/search', async (req, res) => {
       scannedPages,
       exhausted,
       timedOut,
-      elapsedMs
+      elapsedMs,
+      nextResumePageToken: pageToken || null
     });
   } catch (error) {
     console.error('Amazon search error:', error.response?.data || error.message);
