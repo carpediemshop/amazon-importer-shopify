@@ -19,6 +19,8 @@
       --accent-soft:#eef2ff;
       --success:#059669;
       --danger:#dc2626;
+      --warning:#b45309;
+      --warning-soft:#fffbeb;
       --shadow:0 16px 40px rgba(15,23,42,0.08);
     }
 
@@ -96,47 +98,17 @@
       box-shadow: 0 1px 1px rgba(0,0,0,0.04);
     }
 
-    button.primary {
-      background: var(--primary);
-      color: #fff;
-    }
+    button.primary { background: var(--primary); color: #fff; }
+    button.primary:hover { background: var(--primary-2); transform: translateY(-1px); }
 
-    button.primary:hover {
-      background: var(--primary-2);
-      transform: translateY(-1px);
-    }
+    button.secondary { background: #fff; color: var(--text); border-color: var(--border); }
+    button.secondary:hover { background: #f9fafb; transform: translateY(-1px); }
 
-    button.secondary {
-      background: #fff;
-      color: var(--text);
-      border-color: var(--border);
-    }
+    button.accent { background: var(--accent); color: #fff; }
+    button.accent:hover { background: #4338ca; transform: translateY(-1px); }
 
-    button.secondary:hover {
-      background: #f9fafb;
-      transform: translateY(-1px);
-    }
-
-    button.accent {
-      background: var(--accent);
-      color: #fff;
-    }
-
-    button.accent:hover {
-      background: #4338ca;
-      transform: translateY(-1px);
-    }
-
-    button.ghost {
-      background: var(--accent-soft);
-      color: #3730a3;
-      border-color: #c7d2fe;
-    }
-
-    button.ghost:hover {
-      background: #e0e7ff;
-      transform: translateY(-1px);
-    }
+    button.ghost { background: var(--accent-soft); color: #3730a3; border-color: #c7d2fe; }
+    button.ghost:hover { background: #e0e7ff; transform: translateY(-1px); }
 
     button.import-btn {
       min-width: 108px;
@@ -355,23 +327,8 @@
       border: 1px solid transparent;
     }
 
-    .pill.asin {
-      background: #eff6ff;
-      color: #1d4ed8;
-      border-color: #bfdbfe;
-    }
-
-    .pill.sku {
-      background: #f5f3ff;
-      color: #6d28d9;
-      border-color: #ddd6fe;
-    }
-
-    .pill.status {
-      background: #f0fdf4;
-      color: #15803d;
-      border-color: #bbf7d0;
-    }
+    .pill.asin { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .pill.status { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
 
     .sku-value {
       font-family: "Consolas", "SFMono-Regular", monospace;
@@ -462,22 +419,10 @@
     }
 
     @media (max-width: 900px) {
-      .page {
-        padding: 16px;
-      }
-
-      .hero h1 {
-        font-size: 32px;
-      }
-
-      .table-head,
-      .table-row {
-        min-width: 980px;
-      }
-
-      .summary-grid {
-        grid-template-columns: 1fr;
-      }
+      .page { padding: 16px; }
+      .hero h1 { font-size: 32px; }
+      .table-head, .table-row { min-width: 980px; }
+      .summary-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -487,7 +432,7 @@
       <h1>Amazon Importer → Shopify</h1>
       <p>
         Importa rapidamente le tue inserzioni Amazon già presenti in Seller Central e crea prodotti in bozza su Shopify,
-        con titolo, immagini, descrizione, prezzo, SKU e ASIN.
+        con titolo, immagini, descrizione, prezzo, SKU, EAN, peso e quantità.
       </p>
     </section>
 
@@ -760,10 +705,18 @@
           throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
         }
 
+        const result = data.result;
+
+        if (result.duplicate) {
+          log(`Import bloccato: SKU già presente su Shopify (${sku}).`);
+          alert(`Import bloccato.\nLo SKU è già presente su Shopify.\n\nSKU: ${sku}`);
+          return;
+        }
+
         importedCount += 1;
         updateSummary();
 
-        log(`Import completato per SKU ${sku}: ${JSON.stringify(data.product)}`);
+        log(`Import completato per SKU ${sku}: ${JSON.stringify(result)}`);
         alert(`Prodotto importato correttamente su Shopify.\nSKU: ${sku}`);
       } catch (e) {
         log('Errore import: ' + e.message);
