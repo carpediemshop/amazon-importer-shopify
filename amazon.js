@@ -149,32 +149,14 @@ async function getAmazonListingDetail(sku) {
     item.asin ||
     null;
 
-  const brand =
-    summary.brand ||
-    attributes.brand?.[0]?.value ||
-    '';
+  const brand = firstNonEmpty([
+    summary.brand,
+    getAttributeValue(attributes, 'brand'),
+    getAttributeValue(attributes, 'manufacturer'),
+    getAttributeValue(attributes, 'supplier_declared_dg_hz_regulation')
+  ]);
 
-  const descriptionParts = [];
-
-  if (attributes.product_description?.[0]?.value) {
-    descriptionParts.push(attributes.product_description[0].value);
-  }
-
-  if (Array.isArray(attributes.bullet_point)) {
-    const bullets = attributes.bullet_point
-      .map((b) => b.value)
-      .filter(Boolean);
-
-    if (bullets.length) {
-      descriptionParts.push(
-        '<ul>' + bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join('') + '</ul>'
-      );
-    }
-  }
-
-  const descriptionHtml =
-    descriptionParts.join('<br><br>') ||
-    `<p>Prodotto importato da Amazon SKU ${escapeHtml(sku)}</p>`;
+  const descriptionHtml = buildDescriptionHtml(attributes, sku);
 
   const imageCandidates = [];
 
@@ -202,22 +184,358 @@ async function getAmazonListingDetail(sku) {
     price = '0.00';
   }
 
-  const barcode =
-    attributes.externally_assigned_product_identifier?.[0]?.value ||
-    attributes.item_package_gtin?.[0]?.value ||
-    null;
+  const barcode = findBarcode(attributes);
+
+  const quantity = getAmazonQuantity(item);
+
+  const weight = findWeight(attributes);
 
   return {
     sku,
     asin,
     title,
-    brand,
+    brand: brand || '',
     descriptionHtml,
     imageUrls: uniqueImages,
     price,
     barcode,
+    quantity,
+    weight,
     raw: item
   };
+}
+
+function buildDescriptionHtml(attributes, sku) {
+  const introParts = [];
+
+  const productDescription = collectAttributeStrings(attributes, [
+    'product_description',
+    'description',
+    'item_description',
+    'generic_keyword'
+  ]);
+
+  for (const text of productDescription) {
+    if (text && text.length > 10) {
+      introParts.push(`<p>${escapeHtml(text)}</p>`);
+    }
+  }
+
+  const bullets = dedupeStrings([
+    ...collectAttributeStrings(attributes, ['bullet_point']),
+    ...collectAttributeStrings(attributes, [
+      'special_feature',
+      'included_components',
+      'material',
+      'color',
+      'style',
+      'model_name'
+    ])
+  ]).filter(Boolean);
+
+  const bulletHtml = bullets.length
+    ? `<ul>${bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`
+    : '';
+
+  const specs = [];
+
+  pushSpec(specs, 'Marca', firstNonEmpty([
+    getAttributeValue(attributes, 'brand'),
+    getAttributeValue(attributes, 'manufacturer')
+  ]));
+  pushSpec(specs, 'Modello', getAttributeValue(attributes, 'model_name'));
+  pushSpec(specs, 'Colore', getAttributeValue(attributes, 'color'));
+  pushSpec(specs, 'Materiale', getAttributeValue(attributes, 'material'));
+  pushSpec(specs, 'Taglia', getAttributeValue(attributes, 'size'));
+
+  const specHtml = specs.length
+    ? `<h3>Dettagli prodotto</h3><ul>${specs.map((s) => `<li><strong>${escapeHtml(s.label)}:</strong> ${escapeHtml(s.value)}</li>`).join('')}</ul>`
+    : '';
+
+  const html = `${introParts.join('')}${bulletHtml}${specHtml}`.trim();
+
+  if (html) return html;
+
+  return `<p>Prodotto importato da Amazon SKU ${escapeHtml(sku)}</p>`;
+}
+
+function pushSpec(specs, label, value) {
+  if (value) {
+    specs.push({ label, value });
+  }
+}
+
+function getAmazonQuantity(item) {
+  if (!Array.isArray(item.fulfillmentAvailability)) return 0;
+
+  for (const entry of item.fulfillmentAvailability) {
+    if (typeof entry.quantity === 'number') return entry.quantity;
+    if (typeof entry.fulfillment_channel_quantity === 'number') return entry.fulfillment_channel_quantity;
+  }
+
+  return 0;
+}
+
+function findBarcode(attributes) {
+  const directCandidates = [
+    'externally_assigned_product_identifier',
+    'item_package_gtin',
+    'gtin',
+    'ean',
+    'ean_code',
+    'upc',
+    'isbn'
+  ];
+
+  for (const key of directCandidates) {
+    const value = getAttributeValue(attributes, key);
+    if (looksLikeBarcode(value)) {
+      return onlyDigits(value);
+    }
+  }
+
+  const deepMatches = deepCollectValues(attributes, (path, value) => {
+    const p = path.toLowerCase();
+    return (
+      typeof value === 'string' &&
+      (
+        p.includes('ean') ||
+        p.includes('gtin') ||
+        p.includes('upc') ||
+        p.includes('isbn') ||
+        p.includes('externally_assigned_product_identifier')
+      )
+    );
+  });
+
+  for (const value of deepMatches) {
+    if (looksLikeBarcode(value)) {
+      return onlyDigits(value);
+    }
+  }
+
+  return null;
+}
+
+function findWeight(attributes) {
+  const preferredPaths = [
+    'item_package_weight',
+    'package_weight',
+    'item_weight'
+  ];
+
+  for (const key of preferredPaths) {
+    const entry = getAttributeEntry(attributes, key);
+    const normalized = normalizeWeightEntry(entry);
+    if (normalized) return normalized;
+  }
+
+  const deepEntries = deepCollectEntries(attributes, (path, entry) => {
+    const p = path.toLowerCase();
+    return p.includes('weight');
+  });
+
+  for (const entry of deepEntries) {
+    const normalized = normalizeWeightEntry(entry);
+    if (normalized) return normalized;
+  }
+
+  return null;
+}
+
+function normalizeWeightEntry(entry) {
+  if (!entry) return null;
+
+  if (Array.isArray(entry)) {
+    for (const sub of entry) {
+      const found = normalizeWeightEntry(sub);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof entry === 'object') {
+    const value = entry.value ?? entry.amount ?? null;
+    const unit = entry.unit ?? entry.unit_of_measure ?? entry.unitOfMeasure ?? null;
+
+    if (typeof value === 'number' || typeof value === 'string') {
+      const parsed = Number(String(value).replace(',', '.'));
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        return {
+          value: parsed,
+          unit: normalizeWeightUnit(unit)
+        };
+      }
+    }
+
+    for (const nested of Object.values(entry)) {
+      const found = normalizeWeightEntry(nested);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+function normalizeWeightUnit(unit) {
+  const raw = String(unit || 'kg').trim().toUpperCase();
+
+  if (raw.includes('GRAM')) return 'GRAMS';
+  if (raw === 'G') return 'GRAMS';
+  if (raw.includes('KILOGRAM')) return 'KILOGRAMS';
+  if (raw === 'KG') return 'KILOGRAMS';
+  if (raw.includes('OUNCE') || raw === 'OZ') return 'OUNCES';
+  if (raw.includes('POUND') || raw === 'LB' || raw === 'LBS') return 'POUNDS';
+
+  return 'KILOGRAMS';
+}
+
+function getAttributeEntry(attributes, key) {
+  return attributes?.[key] ?? null;
+}
+
+function getAttributeValue(attributes, key) {
+  const entry = getAttributeEntry(attributes, key);
+  if (!entry) return null;
+
+  if (Array.isArray(entry)) {
+    for (const item of entry) {
+      const found = extractAnyString(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  return extractAnyString(entry);
+}
+
+function collectAttributeStrings(attributes, keys) {
+  const out = [];
+
+  for (const key of keys) {
+    const entry = getAttributeEntry(attributes, key);
+    if (!entry) continue;
+
+    if (Array.isArray(entry)) {
+      for (const item of entry) {
+        const found = extractAnyString(item);
+        if (found) out.push(found);
+      }
+    } else {
+      const found = extractAnyString(entry);
+      if (found) out.push(found);
+    }
+  }
+
+  return dedupeStrings(out);
+}
+
+function extractAnyString(value) {
+  if (value == null) return null;
+
+  if (typeof value === 'string') {
+    const v = value.trim();
+    return v || null;
+  }
+
+  if (typeof value === 'number') {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractAnyString(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value === 'object') {
+    const preferredKeys = ['value', 'display_value', 'name', 'text'];
+    for (const key of preferredKeys) {
+      if (key in value) {
+        const found = extractAnyString(value[key]);
+        if (found) return found;
+      }
+    }
+
+    for (const nested of Object.values(value)) {
+      const found = extractAnyString(nested);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+function deepCollectValues(obj, predicate, path = '') {
+  const results = [];
+
+  function walk(value, currentPath) {
+    if (predicate(currentPath, value)) {
+      results.push(value);
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => walk(v, `${currentPath}[${i}]`));
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        walk(v, currentPath ? `${currentPath}.${k}` : k);
+      }
+    }
+  }
+
+  walk(obj, path);
+  return results;
+}
+
+function deepCollectEntries(obj, predicate, path = '') {
+  const results = [];
+
+  function walk(value, currentPath) {
+    if (predicate(currentPath, value)) {
+      results.push(value);
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => walk(v, `${currentPath}[${i}]`));
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        walk(v, currentPath ? `${currentPath}.${k}` : k);
+      }
+    }
+  }
+
+  walk(obj, path);
+  return results;
+}
+
+function looksLikeBarcode(value) {
+  const digits = onlyDigits(value);
+  return digits.length >= 8 && digits.length <= 14;
+}
+
+function onlyDigits(value) {
+  return String(value || '').replace(/\D+/g, '');
+}
+
+function firstNonEmpty(values) {
+  for (const value of values) {
+    if (value && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return null;
+}
+
+function dedupeStrings(values) {
+  return [...new Set(values.map((v) => String(v || '').trim()).filter(Boolean))];
 }
 
 function escapeHtml(str) {
