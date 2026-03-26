@@ -209,7 +209,7 @@ async function createShopifyProduct(accessToken, detail) {
 
   const productCreateMutation = `
     mutation productCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
-      productCreate(product: $product, media: [CreateMediaInput!]) {
+      productCreate(product: $product, media: $media) {
         product {
           id
           title
