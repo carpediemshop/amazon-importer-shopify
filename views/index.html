@@ -1093,7 +1093,10 @@
 
         showLoading('Ricerca in corso', `Sto cercando "${term}" su Amazon importabile...`);
 
-        const r = await fetch(`/api/amazon/search?q=${encodeURIComponent(term)}&limit=20`);
+        const directLookup = /^B0[A-Z0-9]{8}$/i.test(term) || /^[A-Z0-9][A-Z0-9._-]{4,}$/i.test(term) && /[0-9-]/.test(term);
+        const r = await fetch(directLookup
+          ? `/api/amazon/lookup?identifier=${encodeURIComponent(term)}`
+          : `/api/amazon/search?q=${encodeURIComponent(term)}&limit=20`);
         const data = await r.json();
 
         if (requestId !== currentSearchRequestId) {
@@ -1107,6 +1110,12 @@
         searchMode = true;
         searchResults = Array.isArray(data.listings) ? data.listings : [];
         lastSearchedTerm = term;
+        if (directLookup && data.diagnostics?.length) {
+          for (const row of data.diagnostics) {
+            if (row.reason !== 'importable') log(`SKU ${row.item.sku}: escluso (${row.reason}).`);
+          }
+        }
+        if (directLookup && data.reason === 'not_found') log('Identificativo non trovato nel marketplace Amazon configurato.');
         currentSearchResumePageToken = data.nextResumePageToken || null;
         searchTimedOut = !!data.timedOut;
         searchHasMore = !!currentSearchResumePageToken;
