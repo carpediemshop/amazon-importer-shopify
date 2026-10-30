@@ -6,7 +6,8 @@ const fs = require('fs');
 
 const {
   getAmazonListings,
-  getAmazonListingDetail
+  getAmazonListingDetail,
+  lookupAmazonIdentifier
 } = require('./amazon');
 
 const {
@@ -487,6 +488,26 @@ app.get('/api/amazon/search', async (req, res) => {
       ok: false,
       error: error.response?.data || error.message
     });
+  }
+});
+
+app.get('/api/amazon/lookup', async (req, res) => {
+  try {
+    if (!shopifyAccessToken) return res.status(401).json({ok:false,error:'Shopify non collegato'});
+    const identifier = String(req.query.identifier || '').trim();
+    if (!identifier || identifier.length > 100) return res.status(400).json({ok:false,error:'SKU/ASIN non valido'});
+    const listings = await lookupAmazonIdentifier(identifier);
+    if (!listings.length) return res.json({ok:true,listings:[],reason:'not_found'});
+    const existing = await getExistingKeysMap(shopifyAccessToken,listings);
+    const diagnostics = listings.map(item => {
+      const skuDuplicate = !!existing[`sku:${item.sku}`];
+      const barcodeDuplicate = !!(item.barcode && existing[`barcode:${item.barcode}`]);
+      return {item,reason:skuDuplicate?'sku_duplicate':barcodeDuplicate?'barcode_duplicate':'importable'};
+    });
+    res.json({ok:true,listings:diagnostics.filter(x=>x.reason==='importable').map(x=>x.item),diagnostics});
+  } catch(error) {
+    console.error('Amazon lookup error:',error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({ok:false,error:error.response?.data || error.message});
   }
 });
 
