@@ -35,7 +35,7 @@ async function getLwaAccessToken() {
 
 async function amazonGet(client, url, options) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    try { return await amazonGet(client,url, options); }
+    try { return await client.get(url, options); }
     catch (error) {
       const status = error.response?.status;
       if (![429, 500, 502, 503, 504].includes(status) || attempt === 2) throw error;
@@ -134,6 +134,32 @@ async function getAmazonListings({ pageSize = 20, pageToken = null } = {}) {
     items: items.map(pickListingSummary),
     nextToken: response.data.pagination?.nextToken || null
   };
+}
+
+async function lookupAmazonIdentifier(identifier) {
+  const sellerId = requireEnv('AMAZON_SELLER_ID');
+  const marketplaceId = requireEnv('AMAZON_MARKETPLACE_ID');
+  const token = await getLwaAccessToken();
+  const client = getSpApiClient(token);
+  const value = String(identifier || '').trim();
+  if (!value) throw new Error('Identificativo mancante');
+  if (/^B0[A-Z0-9]{8}$/i.test(value)) {
+    const response = await amazonGet(client, `/listings/2021-08-01/items/${encodeURIComponent(sellerId)}`, {
+      params: { marketplaceIds: marketplaceId, identifiers: value, identifiersType: 'ASIN',
+        includedData: 'summaries,attributes,offers', pageSize: 20 }
+    });
+    return (response.data.items || []).map(pickListingSummary).filter(item =>
+      String(item.asin || '').toUpperCase() === value.toUpperCase());
+  }
+  try {
+    const response = await amazonGet(client,
+      `/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(value)}`,
+      { params: { marketplaceIds: marketplaceId, includedData: 'summaries,attributes,offers' } });
+    return [pickListingSummary(response.data)];
+  } catch (error) {
+    if (error.response?.status === 404) return [];
+    throw error;
+  }
 }
 
 async function getAmazonListingDetail(sku) {
@@ -683,5 +709,6 @@ function escapeHtml(str) {
 
 module.exports = {
   getAmazonListings,
-  getAmazonListingDetail
+  getAmazonListingDetail,
+  lookupAmazonIdentifier
 };
