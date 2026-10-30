@@ -155,44 +155,54 @@ function clearShopifyTokenFile() {
  * =========================================================
  */
 
-async function getImportableAmazonListingsPage({ accessToken, pageSize, pageToken }) {
-  let finalItems = [];
-  let finalNextToken = null;
+// Cursor keeps the offset within an Amazon page, so no fetched listing is discarded.
+function decodeListingCursor(cursor) {
+  if (!cursor) return { pageToken: null, offset: 0 };
+  try {
+    const obj = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (obj.v !== 1 || !Number.isInteger(obj.offset) || obj.offset < 0 || obj.offset > 20 ||
+        (obj.pageToken !== null && typeof obj.pageToken !== 'string')) throw Error('invalid');
+    return { pageToken: obj.pageToken, offset: obj.offset };
+  } catch { throw new Error('Cursore paginazione non valido. Premi Carica inserzioni Amazon per ripartire.'); }
+}
+function encodeListingCursor(pageToken, offset) {
+  return Buffer.from(JSON.stringify({v:1,pageToken,offset})).toString('base64url');
+}
+async function getImportableAmazonListingsPage({ accessToken, pageSize, cursor }) {
+  let {pageToken,offset} = decodeListingCursor(cursor);
+  const items = [];
+  const seen = new Set();
   let scannedPages = 0;
-  let currentPageToken = pageToken || null;
-
-  while (scannedPages < 12 && finalItems.length < pageSize) {
-    const result = await getAmazonListings({ pageSize, pageToken: currentPageToken });
+  const maxPages = 12;
+  while (scannedPages < maxPages && items.length < pageSize) {
+    const currentToken = pageToken;
+    const result = await getAmazonListings({pageSize:20,pageToken:currentToken});
     const amazonItems = result.items || [];
-    finalNextToken = result.nextToken || null;
-
+    scannedPages++;
     if (!amazonItems.length) {
-      break;
+      if (!result.nextToken) return {listings:items,nextToken:null,scannedPages};
+      pageToken = result.nextToken; offset = 0; continue;
     }
-
-    const existingMap = await getExistingKeysMap(accessToken, amazonItems);
-
-    const filtered = amazonItems.filter((item) => {
-      const skuKey = item.sku ? `sku:${item.sku}` : null;
-      const barcodeKey = item.barcode ? `barcode:${item.barcode}` : null;
-
-      if (skuKey && existingMap[skuKey]) return false;
-      if (barcodeKey && existingMap[barcodeKey]) return false;
-
-      return true;
-    });
-
-    finalItems.push(...filtered);
-
-    if (!finalNextToken) break;
-    currentPageToken = finalNextToken;
-    scannedPages += 1;
+    const remaining = amazonItems.slice(offset);
+    const existingMap = remaining.length ? await getExistingKeysMap(accessToken,remaining) : {};
+    for (let i=offset;i<amazonItems.length;i++) {
+      const item=amazonItems[i];
+      const sku=String(item.sku||'');
+      const duplicate=!!(sku && existingMap[`sku:${sku}`]) ||
+        !!(item.barcode && existingMap[`barcode:${item.barcode}`]);
+      if (!duplicate && sku && !seen.has(sku)) {seen.add(sku);items.push(item);}
+      if (items.length >= pageSize) {
+        const nextOffset=i+1;
+        const nextToken=nextOffset < amazonItems.length
+          ? encodeListingCursor(currentToken,nextOffset)
+          : (result.nextToken ? encodeListingCursor(result.nextToken,0) : null);
+        return {listings:sortListingsByRecentDesc(items),nextToken,scannedPages};
+      }
+    }
+    if (!result.nextToken) return {listings:sortListingsByRecentDesc(items),nextToken:null,scannedPages};
+    pageToken=result.nextToken; offset=0;
   }
-
-  return {
-    listings: sortListingsByRecentDesc(finalItems).slice(0, pageSize),
-    nextToken: finalNextToken
-  };
+  return {listings:sortListingsByRecentDesc(items),nextToken:encodeListingCursor(pageToken,offset),scannedPages};
 }
 
 let shopifyAccessToken = null;
@@ -361,12 +371,12 @@ app.get('/api/amazon/listings', async (req, res) => {
     }
 
     const pageSize = Math.min(Math.max(Number(req.query.pageSize || 20), 1), 20);
-    const pageToken = req.query.pageToken || null;
+    const cursor = req.query.pageToken || null;
 
     const result = await getImportableAmazonListingsPage({
       accessToken: shopifyAccessToken,
       pageSize,
-      pageToken
+      cursor
     });
 
     res.json({
