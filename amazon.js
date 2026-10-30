@@ -33,6 +33,19 @@ async function getLwaAccessToken() {
   return response.data.access_token;
 }
 
+async function amazonGet(client, url, options) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return await amazonGet(client,url, options); }
+    catch (error) {
+      const status = error.response?.status;
+      if (![429, 500, 502, 503, 504].includes(status) || attempt === 2) throw error;
+      const wait = 400 * (2 ** attempt);
+      console.warn('Amazon transient API failure', status, 'retrying in', wait, 'ms');
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+  }
+}
+
 function getSpApiClient(accessToken) {
   const endpoint = requireEnv('AMAZON_SP_API_ENDPOINT');
 
@@ -111,7 +124,7 @@ async function getAmazonListings({ pageSize = 20, pageToken = null } = {}) {
     params.pageToken = pageToken;
   }
 
-  const response = await client.get(`/listings/2021-08-01/items/${sellerId}`, {
+  const response = await amazonGet(client,`/listings/2021-08-01/items/${sellerId}`, {
     params
   });
 
@@ -130,7 +143,7 @@ async function getAmazonListingDetail(sku) {
   const token = await getLwaAccessToken();
   const client = getSpApiClient(token);
 
-  const response = await client.get(
+  const response = await amazonGet(client,
     `/listings/2021-08-01/items/${sellerId}/${encodeURIComponent(sku)}`,
     {
       params: {
@@ -207,7 +220,7 @@ async function getAmazonListingDetail(sku) {
 
 async function getCatalogImagesByAsin({ client, asin, marketplaceId }) {
   try {
-    const response = await client.get(
+    const response = await amazonGet(client,
       `/catalog/2022-04-01/items/${encodeURIComponent(asin)}`,
       {
         params: {
